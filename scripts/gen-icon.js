@@ -1,7 +1,7 @@
 'use strict';
 
-// Render the DeepSeek whale logo (from the harness favicon.svg path) onto a
-// DeepSeek-blue gradient at 1024x1024 — pure Node, no GUI, no deps.
+// Render the DeepSeek whale logo on a black macOS application icon — pure
+// Node, no GUI, no dependencies.
 //   node scripts/gen-icon.js [path/to/favicon.svg]
 // Output: assets/icon-1024.png (then build-icns.sh turns it into icon.icns).
 
@@ -101,8 +101,8 @@ const mapped = edges.map((e) => [X(e[0]), Y(e[1]), X(e[2]), Y(e[3])]);
 
 // --- colors ---
 function hex(c) { return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]; }
-const top = hex('#5b7cff');
-const bottom = hex('#3b56d6');
+const top = hex('#171717');
+const bottom = hex('#000000');
 function bg(x, y) {
   const t = (x + y) / (2 * (R - 1));
   return [

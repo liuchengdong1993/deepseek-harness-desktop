@@ -35,7 +35,7 @@ jobs:
       - name: Set up pnpm 11
         uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 11.7.0
           run_install: false     # harness deps are installed in the build step below
 
       - name: Install app dependencies (npm ci)
@@ -105,13 +105,32 @@ jobs:
 
       - name: Bundle DeepSeek Harness into harness.tar
         timeout-minutes: 30      # pnpm install + build of the monorepo is the slow step
+        env:
+          # The reviewed desktop patches are tied to this Harness revision.
+          # Upgrade it deliberately together with refreshed patches and tests.
+          HARNESS_REV: 47f943859bef60e4160492346772ded9b24f765a
         run: |
           # WHY regenerate: harness.tar (~1.6 GB, includes node_modules) is in
           # .gitignore, so CI must rebuild it from source on every release. At
           # first run the app extracts it and needs the BUILT CLI at
           # apps/cli/lib/bin.js (see lib/harness.js).
-          git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git harness
+          git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/deepseek-harness.git harness
           cd harness
+          git checkout --detach "$HARNESS_REV"
+          # The desktop product removes the beta declaration while preserving
+          # the useful DeepSeek credential onboarding. Fail if upstream drift
+          # makes the reviewed patch no longer apply cleanly.
+          git apply --check ../patches/remove-welcome-notice.patch
+          git apply ../patches/remove-welcome-notice.patch
+          # The official settings surface gains the desktop's plugin lifecycle
+          # controls here. Keep it separate from the welcome-copy patch so
+          # either concern can be audited and upgraded independently.
+          git apply --check ../patches/harness-plugin-lifecycle.patch
+          git apply ../patches/harness-plugin-lifecycle.patch
+          # Keep the desktop's Chinese mode fully localized in both the
+          # permission settings row and the in-session picker.
+          git apply --check ../patches/harness-zh-permission-presets.patch
+          git apply ../patches/harness-zh-permission-presets.patch
           pnpm install
           pnpm run build
           test -f apps/cli/lib/bin.js   # fail fast if the CLI wasn't built
@@ -119,6 +138,11 @@ jobs:
           # -C harness => tar contents are apps/, packages/, ... with no
           # top-level harness/ dir; --exclude .git keeps the archive smaller.
           tar -cf harness.tar --exclude .git -C harness .
+          node scripts/write-harness-bundle-manifest.js \
+            --archive harness.tar \
+            --output harness.bundle.json \
+            --revision "$HARNESS_REV"
+          test -f harness.bundle.json
 
       - name: Bundle Node 22 runtime (runtime/node)
         run: |
@@ -134,6 +158,18 @@ jobs:
           chmod +x runtime/node
           rm -rf node-v22.23.1-darwin-arm64 node-v22.23.1-darwin-arm64.tar.gz
           ./runtime/node --version   # sanity check: the binary runs on this arm64 runner
+
+      - name: Bundle pnpm 11.7.0 runtime (runtime/pnpm)
+        run: |
+          # pnpm's entry point imports files in its sibling dist/ directory,
+          # so package the complete npm artifact rather than only bin/pnpm.cjs.
+          PNPM_TARBALL="$(npm pack --silent --ignore-scripts pnpm@11.7.0)"
+          mkdir -p runtime/pnpm
+          tar -xzf "$PNPM_TARBALL" --strip-components=1 -C runtime/pnpm
+          rm -f "$PNPM_TARBALL"
+          test -f runtime/pnpm/bin/pnpm.cjs
+          test -f runtime/pnpm/dist/pnpm.cjs
+          test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = '11.7.0'
 
       - name: Package & publish DMG (signed & notarized)
         if: steps.signing.outputs.enabled == 'true'

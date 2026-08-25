@@ -1,4 +1,4 @@
-# DeepSeek Desktop
+# DeepSeek Harness
 
 English | [中文](README.zh.md)
 
@@ -9,18 +9,17 @@ A native **macOS desktop app** for [DeepSeek Harness](https://github.com/deepsee
 
 ## Features
 
-- 🖥️ **Native window for the harness** — wraps the DeepSeek Harness web UI; auto-starts the backend and auto-recovers if it goes down.
-- 🤖 **Local agent team** — auto-split a goal into N parallel agents (a coordinator plans, workers execute), then **merge their results into one final answer**.
-- ⚡ **Menu bar + notifications** — stays in the menu bar, notifies you when an agent task finishes, and summons with a global hotkey (⌘⇧Space).
-- 🔌 **Community plugins** — browse and install 117 community plugins with one click.
-- 🔑 **API keys** — set your DeepSeek key (and any other provider keys) in the Settings tab; stored locally, never logged.
-- 🔄 **One-click updates** — `git fetch` / `git pull` + rebuild + restart from the Control Center.
-- 📦 **Zero-setup bundle** — ships the DeepSeek Harness source and Node 22, so users don't need `git`, `pnpm`, or Node installed.
+- **Official GUI** — the desktop window runs the same DeepSeek Harness Web application, interactions, and settings surfaces.
+- **Simplified Chinese by default** — Chromium starts in `zh-CN`; language choices remain owned by the official GUI.
+- **Self-contained runtime** — ships the built Harness, dependencies, Node 22, and pnpm 11.7.0; users do not install Git, pnpm, Node, or Harness separately.
+- **Native lifecycle** — starts, monitors, restarts, and stops the local Harness service with the application.
+- **Shared Harness data** — uses `~/.dsh` by default, so providers, sessions, models, and preferences stay consistent with `dsh web`.
+- **Desktop integration** — black DeepSeek icon, Chinese macOS menus, tray access, global summon shortcut, and automatic application updates.
 
 ## Install
 
-1. Download the latest `DeepSeek-Desktop-<version>-arm64.dmg` from [Releases](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest).
-2. Open the `.dmg` and drag **DeepSeek Desktop** into **Applications**.
+1. Download the latest `DeepSeek-Harness-<version>-arm64.dmg` from [Releases](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest).
+2. Open the `.dmg` and drag **DeepSeek Harness** into **Applications**.
 3. On first launch, **right-click → Open** (the build is unsigned; see [Signing](#signing--notarization)).
 4. Enter your DeepSeek API key in **Settings**.
 
@@ -31,13 +30,9 @@ A native **macOS desktop app** for [DeepSeek Harness](https://github.com/deepsee
 | Where | What you can do |
 | --- | --- |
 | **Main window** | The DeepSeek Harness web UI (same app as `npx @deepseek-ai/dsh web`) |
-| **Control Center → Overview** | Harness path, backend status, start/stop/restart |
-| **Control Center → Updates** | Check for updates / pull & rebuild from GitHub |
-| **Control Center → Community Plugins** | Search + install/remove the 117-plugin catalog |
-| **Control Center → Local Agents** | Run one agent, or a team (auto-split into N workers) |
-| **Control Center → Settings** | API keys + endpoint |
-
-Open the Control Center via *File → Control Center* (`⌘⇧P`).
+| **Settings** | Language, appearance, permissions, models, plugins, and agent presets |
+| **Help menu** | Restart the local Harness service or view runtime details |
+| **Menu bar** | Reopen the window, reload the GUI, restart Harness, or quit |
 
 ## Development
 
@@ -49,39 +44,39 @@ npm run icon       # regenerate the whale icon (scripts/gen-icon.js → icon.icn
 npm run dist       # build the .dmg
 ```
 
-The app is an Electron shell around DeepSeek Harness:
+The Electron main process owns only desktop lifecycle and loads the official Harness GUI as its application surface:
 
 ```
 dsh-desktop/
-├── main.js               Electron main: windows, IPC, backend/update/agent orchestration
-├── preload.js            contextBridge API for the Control Center
-├── preload-shell.js      minimal API for the main window's shell/offline page
-├── lib/                  plain-Node modules: git, backend, plugins, credentials, …
-├── renderer/             Control Center UI + shell.html (vanilla JS, no build step)
-├── agent/                dsh-agent — the local agent-team controller (vendored)
-├── scripts/              icon generation (pure Node SVG→PNG rasterizer)
-├── assets/               app icon (DeepSeek whale) + source SVG
+├── main.js               Electron application orchestration and system lifecycle
+├── lib/                  install, service, window, menu, and update modules
+├── test/                 headless desktop infrastructure tests
+├── patches/              reviewed Harness product patches applied by release CI
+├── scripts/              black DeepSeek icon generation
+├── assets/               application and tray icons
 ├── build/                entitlements + signing docs
 ├── .github/workflows/    CI (release.yml)
-└── harness.tar           bundled DeepSeek Harness (regenerated by CI, gitignored)
+├── harness.tar           bundled DeepSeek Harness (regenerated by CI, gitignored)
+└── runtime/              bundled Node 22 and pnpm 11.7.0 (regenerated by CI, gitignored)
 ```
 
 ### How the "self-contained" bundle works
 
-Two large artifacts are **not** committed (too big) and are regenerated at build time:
+Three large artifacts are **not** committed (too big) and are regenerated at build time:
 
-- **`harness.tar`** — a full DeepSeek Harness checkout (source + `node_modules`, ~1.6 GB). On first run the app extracts it to `~/.dsh-desktop/harness`.
+- **`harness.tar`** — a built DeepSeek Harness checkout (source + `node_modules`, ~1.6 GB). The app installs it atomically into `~/.dsh-desktop/harness` and refreshes it when the desktop version changes.
 - **`runtime/node`** — a Node 22 (arm64) binary. Electron 33 bundles Node 20, which is too old for the harness, so the app ships its own and spawns it directly.
+- **`runtime/pnpm`** — the complete `pnpm@11.7.0` package. Harness uses it for GUI-driven plugin installation, updates, and removal without a system pnpm installation.
 
 ## Releases & CI
 
-Pushing a `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml): it rebuilds `harness.tar` (clone + `pnpm install` + `pnpm run build`), downloads Node 22, packages the `.dmg`, and attaches it to the GitHub Release.
+Pushing a `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml): it clones Harness, applies the reviewed desktop patch, rebuilds `harness.tar`, downloads Node 22, bundles pnpm 11.7.0, packages the `.dmg`, and attaches it to the GitHub Release.
 
 If the Apple signing secrets are configured, the build is **signed + notarized** automatically; otherwise it falls back to an unsigned build.
 
 ## Signing & notarization
 
-This build is **unsigned** by default, so Gatekeeper blocks the first launch (right-click → Open, or `xattr -cr "/Applications/DeepSeek Desktop.app"`).
+This build is **unsigned** by default, so Gatekeeper blocks the first launch (right-click → Open, or `xattr -cr "/Applications/DeepSeek Harness.app"`).
 
 To ship a signed + notarized build, see **[`SIGNING.md`](SIGNING.md)** — it walks through the Apple Developer certificate, the 5 GitHub secrets to create, and how the CI switches to signed builds automatically.
 

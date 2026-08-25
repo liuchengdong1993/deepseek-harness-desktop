@@ -1,0 +1,233 @@
+diff --git a/packages/client/ui-permission-presets/src/client/PermissionRow.tsx b/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
+index ae8c8ba..4f19cf3 100644
+--- a/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
++++ b/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
+@@ -12,7 +12,7 @@ import {
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { PermissionSettingsState } from './settings-store.ts'
+ import type { PermissionSettingsKey } from './locales.ts'
+-import { FULL_ACCESS_PRESET } from './presentation.ts'
++import { displayPermissionPreset, FULL_ACCESS_PRESET } from './presentation.ts'
+ import css from './PermissionRow.module.css'
+ 
+ /** Registration-side business face for the host-backed preference. */
+@@ -58,7 +58,7 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
+   if (state.status === 'unavailable') return null
+   const selected = state.options.find(option => option.id === state.currentValue)
+   const busy = state.status === 'loading' || state.status === 'saving' || confirmingFullAccess
+-  const label = selected?.label
++  const label = (selected === undefined ? undefined : displayPermissionPreset(selected.id, selected.label, t))
+     ?? (busy ? t('loading') : t('unavailable'))
+   const description: string = state.error ?? t('description')
+ 
+@@ -72,7 +72,10 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
+         <Menu
+           open={open}
+           onClose={() => { setOpen(false) }}
+-          items={state.options.map(option => ({ id: option.id, label: option.label }))}
++          items={state.options.map(option => ({
++            id: option.id,
++            label: displayPermissionPreset(option.id, option.label, t),
++          }))}
+           selectedId={state.currentValue}
+           onSelect={(id) => {
+             setOpen(false)
+diff --git a/packages/client/ui-permission-presets/src/client/index.ts b/packages/client/ui-permission-presets/src/client/index.ts
+index aec82bf..72a5aa7 100644
+--- a/packages/client/ui-permission-presets/src/client/index.ts
++++ b/packages/client/ui-permission-presets/src/client/index.ts
+@@ -58,7 +58,7 @@ function optionsOf(value: PermissionSelect, t: (key: string) => string): SelectO
+     .filter(option => option.value !== 'custom')
+     .map(option => ({
+       id: option.value,
+-      label: displayPermissionPreset(option.value, option.name),
++      label: displayPermissionPreset(option.value, option.name, t),
+       ...(option.description !== undefined ? { detail: option.description } : {}),
+       ...(option.value === value.currentValue ? { active: true } : {}),
+       ...(option.value === FULL_ACCESS_PRESET
+@@ -89,6 +89,9 @@ export function apply(ctx: ClientContext): void {
+   ctx.effect(() => {
+     const disposers = [
+       ctx.locale.register(ACCESS_NS, 'zh', {
++        'preset.readOnly': accessZh['preset.readOnly'],
++        'preset.workspaceWrite': accessZh['preset.workspaceWrite'],
++        'preset.fullAccess': accessZh['preset.fullAccess'],
+         'confirm.title': accessZh['confirm.title'],
+         'confirm.description': accessZh['confirm.description'],
+         'confirm.acknowledge': accessZh['confirm.acknowledge'],
+@@ -96,6 +99,9 @@ export function apply(ctx: ClientContext): void {
+         'confirm.enable': accessZh['confirm.enable'],
+       }),
+       ctx.locale.register(ACCESS_NS, 'en', {
++        'preset.readOnly': accessEn['preset.readOnly'],
++        'preset.workspaceWrite': accessEn['preset.workspaceWrite'],
++        'preset.fullAccess': accessEn['preset.fullAccess'],
+         'confirm.title': accessEn['confirm.title'],
+         'confirm.description': accessEn['confirm.description'],
+         'confirm.acknowledge': accessEn['confirm.acknowledge'],
+diff --git a/packages/client/ui-permission-presets/src/client/locales.ts b/packages/client/ui-permission-presets/src/client/locales.ts
+index 3920a7a..6c70cd0 100644
+--- a/packages/client/ui-permission-presets/src/client/locales.ts
++++ b/packages/client/ui-permission-presets/src/client/locales.ts
+@@ -6,11 +6,14 @@ export const zh = {
+   'description': '选择新会话的默认权限模式',
+   'loading': '加载中',
+   'unavailable': '不可用',
+-  'confirm.title': '确认启用 Full access？',
+-  'confirm.description': '启用 Full access 后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。',
++  'preset.readOnly': '只读',
++  'preset.workspaceWrite': '工作区写入',
++  'preset.fullAccess': '完全访问',
++  'confirm.title': '确认启用完全访问？',
++  'confirm.description': '启用完全访问后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。',
+   'confirm.acknowledge': '我已了解风险，并愿意继续',
+   'confirm.cancel': '取消',
+-  'confirm.enable': '启用 Full access',
++  'confirm.enable': '启用完全访问',
+ } satisfies Record<string, string>
+ 
+ /** The settings.permission namespace key union. */
+@@ -22,6 +25,9 @@ export const en = {
+   'description': 'Choose the default permission mode for new sessions',
+   'loading': 'Loading',
+   'unavailable': 'Unavailable',
++  'preset.readOnly': 'Read Only',
++  'preset.workspaceWrite': 'Workspace Write',
++  'preset.fullAccess': 'Full access',
+   'confirm.title': 'Enable Full access?',
+   'confirm.description': 'Full access lets new sessions reduce confirmation steps and perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust subsequent tasks.',
+   'confirm.acknowledge': 'I understand the risks and want to continue',
+@@ -31,11 +37,14 @@ export const en = {
+ 
+ /** Simplified Chinese dictionary for the current-session popup gate. */
+ export const accessZh = {
+-  'confirm.title': '确认启用 Full access？',
+-  'confirm.description': '启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
++  'preset.readOnly': '只读',
++  'preset.workspaceWrite': '工作区写入',
++  'preset.fullAccess': '完全访问',
++  'confirm.title': '确认启用完全访问？',
++  'confirm.description': '启用完全访问后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+   'confirm.acknowledge': '我已了解风险，并愿意继续',
+   'confirm.cancel': '取消',
+-  'confirm.enable': '启用 Full access',
++  'confirm.enable': '启用完全访问',
+ } satisfies Record<string, string>
+ 
+ /** Current-session popup-gate key union. */
+@@ -43,6 +52,9 @@ export type PermissionAccessKey = keyof typeof accessZh
+ 
+ /** English dictionary for the current-session popup gate. */
+ export const accessEn = {
++  'preset.readOnly': 'Read Only',
++  'preset.workspaceWrite': 'Workspace Write',
++  'preset.fullAccess': 'Full access',
+   'confirm.title': 'Enable Full access?',
+   'confirm.description': 'Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.',
+   'confirm.acknowledge': 'I understand the risks and want to continue',
+diff --git a/packages/client/ui-permission-presets/src/client/presentation.ts b/packages/client/ui-permission-presets/src/client/presentation.ts
+index ab1b9a5..409750b 100644
+--- a/packages/client/ui-permission-presets/src/client/presentation.ts
++++ b/packages/client/ui-permission-presets/src/client/presentation.ts
+@@ -1,6 +1,18 @@
+ /** Machine value of the preset that requires an explicit GUI risk gate. */
+ export const FULL_ACCESS_PRESET = 'danger-full-access'
+ 
++const PRESET_LABEL_KEYS = {
++  'read-only': 'preset.readOnly',
++  'workspace-write': 'preset.workspaceWrite',
++  [FULL_ACCESS_PRESET]: 'preset.fullAccess',
++} as const
++
++type PermissionPresetLabelKey = typeof PRESET_LABEL_KEYS[keyof typeof PRESET_LABEL_KEYS]
++
++function presetLabelKey(value: string): PermissionPresetLabelKey | undefined {
++  return PRESET_LABEL_KEYS[value as keyof typeof PRESET_LABEL_KEYS]
++}
++
+ /**
+  * Convert conventional kebab-case preset names into user-facing title case.
+  * @param name - host-supplied preset label or key.
+@@ -15,8 +27,11 @@ export function displayPresetName(name: string): string {
+  * Render a permission preset under its product label.
+  * @param value - preset machine value.
+  * @param name - host-supplied preset name.
+- * @returns the Full access product label or the conventional display name.
++ * @param t - optional active-locale translation function.
++ * @returns the localized built-in label or the conventional display name.
+  */
+-export function displayPermissionPreset(value: string, name: string): string {
++export function displayPermissionPreset(value: string, name: string, t?: (key: PermissionPresetLabelKey) => string): string {
++  const key = presetLabelKey(value)
++  if (key !== undefined && t !== undefined) return t(key)
+   return value === FULL_ACCESS_PRESET ? 'Full access' : displayPresetName(name)
+ }
+diff --git a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
+index e3968cf..17dc0c6 100644
+--- a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
++++ b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
+@@ -135,6 +135,13 @@ describe('ui-permission browser plugin', () => {
+       cancelLabel: 'Cancel',
+       confirmLabel: 'Enable Full access',
+     })
++    b.ctx.locale.setLocale('zh')
++    const chinese = await c.ui.options(proj, new AbortController().signal)
++    expect(chinese.map(option => option.label)).toEqual(['只读', '工作区写入', '完全访问'])
++    expect(chinese.find(option => option.id === 'danger-full-access')?.confirmation).toMatchObject({
++      title: '确认启用完全访问？',
++      confirmLabel: '启用完全访问',
++    })
+     b.values.set(sid('s1'), { ...SELECT, options: [{ value: 'plain', name: 'Ask Every Time' }] })
+     const passthrough = await c.ui.options(proj, new AbortController().signal)
+     expect(passthrough[0]?.label).toBe('Ask Every Time')
+diff --git a/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx b/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
+index 9df3920..16cd53a 100644
+--- a/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
++++ b/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
+@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
+ import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+ import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+ import { PermissionRow, type PermissionRowProps } from '../src/client/PermissionRow.tsx'
+-import { en } from '../src/client/locales.ts'
++import { en, zh } from '../src/client/locales.ts'
+ import { PermissionPresetSettingsController } from '../src/client/settings-store.ts'
+ 
+ afterEach(cleanup)
+@@ -36,14 +36,13 @@ function ok<T>(value: T) {
+   return { rpcId: 'test', result: { ok: true as const, value } }
+ }
+ 
+-const dictionary: Record<string, string> = en
+-const t: PermissionRowProps['t'] = key => dictionary[key] ?? key
+ const runtime = {
+   useSessions: (() => { throw new Error('unused') }) as never,
+   useWorkspaces: (() => { throw new Error('unused') }) as never,
+ }
+ 
+-function mount(controller: PermissionPresetSettingsController) {
++function mount(controller: PermissionPresetSettingsController, dictionary: Record<string, string> = en) {
++  const t: PermissionRowProps['t'] = key => dictionary[key] ?? key
+   return render(
+     <PermissionRow
+       {...runtime}
+@@ -108,6 +107,20 @@ describe('PermissionRow', () => {
+     expect(dialog.isConnected).toBe(false)
+   })
+ 
++  it('renders the built-in permissions with Chinese labels in a Chinese locale', async () => {
++    const controller = new PermissionPresetSettingsController({
++      settings: {
++        describe: () => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: [view('workspace-write')] })),
++        mutate: vi.fn(),
++      } as never,
++    })
++    mount(controller, zh)
++    const button = await screen.findByRole('button', { name: '工作区写入' })
++    fireEvent.click(button)
++    expect(screen.getByRole('menuitem', { name: '只读' })).toBeDefined()
++    expect(screen.getByRole('menuitem', { name: '完全访问' })).toBeDefined()
++  })
++
+   it('hides an unavailable namespace and disables a read-only provider', async () => {
+     const absent = new PermissionPresetSettingsController({
+       settings: {

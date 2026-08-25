@@ -1,13 +1,15 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.3",
-  "description": "macOS desktop app for DeepSeek Harness: wraps the web UI, keeps the GitHub source updated, and manages community plugins.",
+  "version": "0.1.5",
+  "description": "DeepSeek Harness 的 macOS 桌面版：承载网页界面、管理后端与社区插件。",
   "main": "main.js",
   "homepage": "https://github.com/deepseek-ai/deepseek-harness",
   "scripts": {
     "start": "electron .",
-    "smoke": "DSH_DESKTOP_SMOKE=1 electron .",
+    "smoke": "DSH_DESKTOP_SMOKE=1 DSH_DESKTOP_WEB_PORT=3180 DSH_DESKTOP_DSH_HOME=/private/tmp/dsh-desktop-smoke-profile electron .",
     "icon": "node scripts/gen-icon.js && bash scripts/build-icns.sh",
+    "test": "node --test test/*.test.js",
+    "verify": "npm test && node --check main.js && node --check lib/*.js",
     "dist": "electron-builder --mac dmg"
   },
   "author": "dsh-desktop",
@@ -18,28 +20,28 @@
   },
   "build": {
     "appId": "com.deepseek.desktop",
-    "productName": "DeepSeek Desktop",
-    "artifactName": "DeepSeek-Desktop-${version}-${arch}.${ext}",
+    "productName": "DeepSeek Harness",
+    "artifactName": "DeepSeek-Harness-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "assets"
     },
     "files": [
       "main.js",
-      "preload.js",
-      "preload-shell.js",
-      "lib/**/*",
-      "renderer/**/*",
-      "agent/**/*",
+      "lib/*.js",
       "runtime/**/*",
       "assets/trayTemplate.png",
-      "harness.tar"
+      "assets/trayTemplate@2x.png",
+      "harness.tar",
+      "harness.bundle.json"
     ],
     "asarUnpack": [
-      "agent/**/*",
       "runtime/**/*",
       "assets/trayTemplate.png",
-      "harness.tar"
+      "assets/trayTemplate@2x.png",
+      "harness.tar",
+      "harness.bundle.json",
+      "lib/promotion-helper.js"
     ],
     "electronDist": "node_modules/electron/dist",
     "publish": [
@@ -61,7 +63,7 @@
       "notarize": true
     },
     "dmg": {
-      "title": "DeepSeek Desktop ${version}",
+      "title": "DeepSeek Harness ${version}",
       "icon": "assets/icon.icns",
       "contents": [
         {

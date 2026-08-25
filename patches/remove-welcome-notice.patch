@@ -1,0 +1,1135 @@
+diff --git a/apps/web/tests/goal-bar.e2e.ts b/apps/web/tests/goal-bar.e2e.ts
+index 00260a7..f4a0d8d 100644
+--- a/apps/web/tests/goal-bar.e2e.ts
++++ b/apps/web/tests/goal-bar.e2e.ts
+@@ -26,7 +26,7 @@ describe('web e2e: goal bar clear convergence', () => {
+   let tripwire: ReturnType<typeof watchConsole>
+ 
+   beforeAll(async () => {
+-    scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, welcomeNoticePending: true })
++    scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY })
+     browser = await chromium.launch()
+     page = await newEnglishPage(browser)
+     tripwire = watchConsole(page)
+diff --git a/apps/web/tests/onboarding-deepseek-config.e2e.ts b/apps/web/tests/onboarding-deepseek-config.e2e.ts
+index ad9bc09..092c4f5 100644
+--- a/apps/web/tests/onboarding-deepseek-config.e2e.ts
++++ b/apps/web/tests/onboarding-deepseek-config.e2e.ts
+@@ -1,7 +1,6 @@
+ // Keyless browser e2e: the shipped DeepSeek adapter stays mounted while its
+-// credential is absent, both ordered steps share the shipped modal chrome,
+-// and the inline key write lands in an isolated harness home without a reload
+-// or model call.
++// credential is absent, and the inline key write lands in an isolated harness
++// home without a reload or model call.
+ import { randomBytes } from 'node:crypto'
+ import { readFile } from 'node:fs/promises'
+ import { fileURLToPath } from 'node:url'
+@@ -9,17 +8,13 @@ import { join } from 'node:path'
+ import type { Browser, Page } from 'playwright'
+ import { chromium } from 'playwright'
+ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+ import {
+   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
+   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
+-  WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_COPY, WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-  WELCOME_NOTICE_VERSION,
+ } from './scaffold.ts'
+ import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
+ 
+ const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/onboarding-deepseek-config', import.meta.url))
+-const WELCOME_EXPECTED = join(SNAPSHOT_DIR, 'welcome.expected.md')
+ const MISSING_EXPECTED = join(SNAPSHOT_DIR, 'missing.expected.md')
+ const MODELS_EXPECTED = join(SNAPSHOT_DIR, 'models.expected.md')
+ const MODE = webSnapshotMode()
+@@ -32,7 +27,7 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+   const browserConsole: string[] = []
+ 
+   beforeAll(async () => {
+-    scaffold = await launchWebScaffold({ deepSeekMissingCredential: true, welcomeNoticePending: true })
++    scaffold = await launchWebScaffold({ deepSeekMissingCredential: true })
+     browser = await chromium.launch()
+     // The scenario asserts the shipped Chinese copy, so the browser asks for it.
+     page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: ZH_BROWSER_LOCALE })
+@@ -49,28 +44,6 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+ 
+   it('stores a key write-only and observes configured state without restarting', async () => {
+     onTestFailed(() => saveFailureShot(page, 'web-e2e-onboarding-deepseek-config'))
+-    const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
+-    await welcome.waitFor({ timeout: 15_000 })
+-    expect(await page.locator('#root').evaluate(root => (root as HTMLElement).inert)).toBe(true)
+-    for (const paragraph of WELCOME_NOTICE_COPY.zh.body.split('\n\n')) {
+-      expect(await welcome.getByText(paragraph, { exact: true }).count()).toBe(1)
+-    }
+-    expect(await welcome.getByRole('button').allTextContents()).toEqual([
+-      WELCOME_NOTICE_COPY.zh.continueLabel,
+-    ])
+-    const welcomeAria = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
+-    await compareOrRefreshGolden(WELCOME_EXPECTED, welcomeAria, MODE)
+-
+-    // Observation is not acknowledgement: the exact version is persisted
+-    // only by the explicit action, so a reload still presents this dialog.
+-    const firstReloadWarnings = tripwire.warnings.length
+-    await page.reload({ waitUntil: 'load' })
+-    acknowledgeReloadConnectionLoss(tripwire, firstReloadWarnings)
+-    await welcome.waitFor({ timeout: 15_000 })
+-
+-    await welcome.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel }).click()
+-    await welcome.waitFor({ state: 'detached', timeout: 15_000 })
+-
+     const credentialStep = page.getByRole('dialog', { name: '添加一个 API Key 开始使用' })
+     await credentialStep.waitFor({ timeout: 15_000 })
+     const keyInput = credentialStep.getByLabel('API 密钥', { exact: true })
+@@ -90,9 +63,6 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+     expect((await page.locator('body').ariaSnapshot()).includes(secret)).toBe(false)
+     expect(browserConsole.some(line => line.includes(secret))).toBe(false)
+ 
+-    const acknowledgedSettings = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+-    expect(acknowledgedSettings).toContain(`${WELCOME_NOTICE_ACK_FIELD}: ${WELCOME_NOTICE_VERSION}`)
+-
+     // The ordinary Models surface reuses the refreshed join and exposes the
+     // configured write-only placeholder without a reload.
+     await page.getByRole('button', { name: '设置', exact: true }).click()
+@@ -113,20 +83,6 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+     await page.reload({ waitUntil: 'load' })
+     acknowledgeReloadConnectionLoss(tripwire, secondReloadWarnings)
+     await page.waitForSelector('[class*="frame"]', { timeout: 15_000 })
+-    expect(await page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title }).count()).toBe(0)
+-    expect(await page.getByRole('dialog', { name: '添加一个 API Key 开始使用' }).count()).toBe(0)
+-
+-    // An old acknowledgement means materially revised copy: welcome returns,
+-    // while the already-configured provider step remains complete.
+-    await scaffold.ctx.settings.mutate(settingsNamespace(WELCOME_NOTICE_SETTINGS_NAMESPACE), [{
+-      op: 'set', path: [WELCOME_NOTICE_ACK_FIELD], value: 'previous-copy-version',
+-    }])
+-    const thirdReloadWarnings = tripwire.warnings.length
+-    await page.reload({ waitUntil: 'load' })
+-    acknowledgeReloadConnectionLoss(tripwire, thirdReloadWarnings)
+-    await welcome.waitFor({ timeout: 15_000 })
+-    await welcome.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel }).click()
+-    await welcome.waitFor({ state: 'detached', timeout: 15_000 })
+     expect(await page.getByRole('dialog', { name: '添加一个 API Key 开始使用' }).count()).toBe(0)
+ 
+     expect((await page.content()).includes(secret)).toBe(false)
+@@ -138,10 +94,10 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+ 
+   it('never paints the takeover chrome on a configured reload, even with the settings join held open', async () => {
+     onTestFailed(() => saveFailureShot(page, 'web-e2e-onboarding-configured-reload'))
+-    // Regression pin for the reload flash: both steps are satisfied, yet each
+-    // must load private facts before deciding not to show. Dialog chrome lives
+-    // inside each visible branch, so the deciding window paints and blocks
+-    // nothing. Holding settings.describe widens that window from loopback
++    // Regression pin for the reload flash: the credential step is satisfied,
++    // yet it must load private facts before deciding not to show. Dialog chrome
++    // lives inside the visible branch, so the deciding window paints and
++    // blocks nothing. Holding settings.describe widens that window from loopback
+     // RTT scale to a deterministic hundreds of milliseconds, removing all
+     // timing dependence from the sampler assertions below.
+     //
+@@ -154,8 +110,7 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+       ;(window as unknown as { __takeoverSightings: string[] }).__takeoverSightings = sightings
+       setInterval(() => {
+         if (document.querySelector(
+-          '[role="dialog"][aria-label="内测声明"], '
+-          + '[role="dialog"][aria-label="添加一个 API Key 开始使用"]',
++          '[role="dialog"][aria-label="添加一个 API Key 开始使用"]',
+         ) !== null) {
+           sightings.push('chrome')
+         }
+@@ -186,7 +141,6 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+     acknowledgeReloadConnectionLoss(tripwire, warningsBefore)
+     expect(await page.evaluate(() =>
+       (window as unknown as { __takeoverSightings: string[] }).__takeoverSightings)).toEqual([])
+-    expect(await page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title }).count()).toBe(0)
+     expect(await page.getByRole('dialog', { name: '添加一个 API Key 开始使用' }).count()).toBe(0)
+     expect(tripwire.pageErrors).toEqual([])
+   }, 60_000)
+@@ -244,7 +198,7 @@ describe.skipIf(MODE === 'record')('web e2e: first-run DeepSeek credential setup
+   it('keeps the fixture inventory closed', async () => {
+     await assertFixtureInventory(
+       SNAPSHOT_DIR,
+-      ['welcome.expected.md', 'missing.expected.md', 'models.expected.md'],
++      ['missing.expected.md', 'models.expected.md'],
+     )
+   })
+ })
+diff --git a/apps/web/tests/remote-welcome.e2e.ts b/apps/web/tests/remote-welcome.e2e.ts
+deleted file mode 100644
+index 256afae..0000000
+--- a/apps/web/tests/remote-welcome.e2e.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-// Trusted non-loopback Web access cannot call the loopback-only settings API;
+-// the notice therefore advances for this browser process and returns on reload.
+-import type { Browser, Page } from 'playwright'
+-import { chromium } from 'playwright'
+-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+-import {
+-  acknowledgeReloadConnectionLoss, launchWebScaffold, watchConsole, webSnapshotMode,
+-  WELCOME_NOTICE_COPY,
+-  type WebScaffold,
+-} from './scaffold.ts'
+-import { ZH_BROWSER_LOCALE } from './support.ts'
+-
+-const MODE = webSnapshotMode()
+-
+-describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
+-  let scaffold: WebScaffold
+-  let browser: Browser
+-  let page: Page
+-  let tripwire: ReturnType<typeof watchConsole>
+-
+-  beforeAll(async () => {
+-    scaffold = await launchWebScaffold({
+-      remoteAuthority: 'remote.localhost',
+-      welcomeNoticePending: true,
+-    })
+-    browser = await chromium.launch()
+-    page = await browser.newPage({
+-      viewport: { width: 1440, height: 960 },
+-      locale: ZH_BROWSER_LOCALE,
+-    })
+-    tripwire = watchConsole(page)
+-    await page.goto(scaffold.baseUrl, { waitUntil: 'load' })
+-    await page.waitForSelector('#root', { timeout: 30_000 })
+-  }, 120_000)
+-
+-  afterAll(async () => {
+-    await browser?.close()
+-    await scaffold?.close()
+-  })
+-
+-  it('advances process-locally and presents the notice again after reload', async () => {
+-    const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
+-    await welcome.waitFor({ timeout: 15_000 })
+-    expect(await page.locator('#root').evaluate(root => (root as HTMLElement).inert)).toBe(true)
+-
+-    await welcome.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel }).click()
+-    await welcome.waitFor({ state: 'detached', timeout: 15_000 })
+-    await expect.poll(
+-      () => page.locator('#root').evaluate(root => (root as HTMLElement).inert),
+-      { timeout: 15_000 },
+-    ).toBe(false)
+-
+-    const reloadWarnings = tripwire.warnings.length
+-    await page.reload({ waitUntil: 'load' })
+-    acknowledgeReloadConnectionLoss(tripwire, reloadWarnings)
+-    await welcome.waitFor({ timeout: 15_000 })
+-    expect(tripwire.warnings).toEqual([])
+-    expect(tripwire.pageErrors).toEqual([])
+-  }, 60_000)
+-})
+diff --git a/apps/web/tests/scaffold.ts b/apps/web/tests/scaffold.ts
+index f1ba62d..a94a960 100644
+--- a/apps/web/tests/scaffold.ts
++++ b/apps/web/tests/scaffold.ts
+@@ -41,7 +41,6 @@ import {
+   loadOverlayPatches,
+ } from '@deepseek-ai/dsh-app-boot'
+ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+ import { LlmAdapter } from '@deepseek-ai/dsh-llm'
+ import type {
+   LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
+@@ -63,25 +62,6 @@ import type {} from '@deepseek-ai/dsh-agent'
+ import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
+ import { REPO_ROOT, requireDist } from './support.ts'
+ 
+-// Host-side web e2e cannot import a browser package: doing so would pull that
+-// package's complete TS project into this graph. Mirrored from
+-// packages/client/ui-settings-models/src/onboarding-copy.ts; drift makes the
+-// default pre-acknowledgement stop suppressing the notice and fails loudly.
+-// import {
+-//   WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-//   WELCOME_NOTICE_VERSION, WELCOME_NOTICE_COPY,
+-// } from '@deepseek-ai/dsh-client-ui-settings-models'
+-export const WELCOME_NOTICE_SETTINGS_NAMESPACE = 'ui-onboarding'
+-export const WELCOME_NOTICE_ACK_FIELD = 'welcomeNoticeVersion'
+-export const WELCOME_NOTICE_VERSION = '2026-08-13.1'
+-export const WELCOME_NOTICE_COPY = {
+-  zh: {
+-    title: '内测声明',
+-    body: 'DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。',
+-    continueLabel: '继续',
+-  },
+-} as const
+-
+ /** Snapshot mode for the lane, from $DSH_SNAPSHOT (same vocabulary as the other snapshot suites). */
+ export type WebSnapshotMode = 'replay' | 'record' | 'refresh'
+ 
+@@ -233,8 +213,6 @@ export interface LaunchOptions {
+    * keyless first-run configuration lane; the default disables the adapter.
+    */
+   deepSeekMissingCredential?: boolean
+-  /** Leave the current welcome notice pending; ordinary scenarios pre-acknowledge it before browser boot. */
+-  welcomeNoticePending?: boolean
+   /**
+    * Patch the shipped DeepSeek search row to a deterministic endpoint and
+    * credential reference. Browser search scenarios keep the real provider and
+@@ -532,11 +510,6 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
+     })
+     await ctx.loader.await()
+     assertEntriesLoaded(ctx, 'web e2e scaffold')
+-    if (options.welcomeNoticePending !== true) {
+-      await ctx.settings.mutate(settingsNamespace(WELCOME_NOTICE_SETTINGS_NAMESPACE), [{
+-        op: 'set', path: [WELCOME_NOTICE_ACK_FIELD], value: WELCOME_NOTICE_VERSION,
+-      }])
+-    }
+     const boundPort = ctx.get('webServer')?.port
+     if (boundPort === undefined) {
+       throw new Error('web e2e scaffold: webServer service missing after settled boot')
+diff --git a/apps/web/tests/snapshots/onboarding-deepseek-config/welcome.expected.md b/apps/web/tests/snapshots/onboarding-deepseek-config/welcome.expected.md
+deleted file mode 100644
+index de65e02..0000000
+--- a/apps/web/tests/snapshots/onboarding-deepseek-config/welcome.expected.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+-- dialog "内测声明":
+-  - heading "内测声明" [level=2]
+-  - paragraph: DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。
+-  - paragraph: 我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。
+-  - button "继续"
+diff --git a/apps/web/tsconfig.json b/apps/web/tsconfig.json
+index 6e706c7..fdd7c46 100644
+--- a/apps/web/tsconfig.json
++++ b/apps/web/tsconfig.json
+@@ -43,7 +43,6 @@
+     "tests/declared-reasoning.e2e.ts",
+     "tests/onboarding-deepseek-config.e2e.ts",
+     "tests/onboarding-usable-provider.e2e.ts",
+-    "tests/remote-welcome.e2e.ts",
+     "tests/workspace-management.e2e.ts",
+     "tests/replay-round-trip.e2e.ts",
+     "tests/hmr-live.e2e.ts",
+diff --git a/packages/client/ui-settings-models/src/client/WelcomeNotice.module.css b/packages/client/ui-settings-models/src/client/WelcomeNotice.module.css
+deleted file mode 100644
+index c11cbc6..0000000
+--- a/packages/client/ui-settings-models/src/client/WelcomeNotice.module.css
++++ /dev/null
+@@ -1,36 +0,0 @@
+-.copy {
+-  font-size: 14px;
+-  line-height: 24px;
+-  color: var(--dsw-alias-label-secondary);
+-}
+-
+-.copy p {
+-  margin: 0;
+-}
+-
+-.copy p + p {
+-  margin-top: 12px;
+-}
+-
+-.error {
+-  margin: 16px 0 0;
+-  font-size: 14px;
+-  line-height: 22px;
+-  color: var(--dsw-alias-state-error-primary);
+-}
+-
+-.actions {
+-  display: flex;
+-  justify-content: flex-end;
+-  margin-top: 24px;
+-}
+-
+-.primary {
+-  min-width: 120px;
+-}
+-
+-@media (max-width: 560px) {
+-  .primary {
+-    width: 100%;
+-  }
+-}
+diff --git a/packages/client/ui-settings-models/src/client/WelcomeNotice.tsx b/packages/client/ui-settings-models/src/client/WelcomeNotice.tsx
+deleted file mode 100644
+index 2a10873..0000000
+--- a/packages/client/ui-settings-models/src/client/WelcomeNotice.tsx
++++ /dev/null
+@@ -1,77 +0,0 @@
+-/** Product-wide, versioned internal-testing notice. */
+-
+-import { useCallback, useEffect, useRef } from 'react'
+-import type { ReactNode } from 'react'
+-import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+-import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+-import type { WelcomeNoticeState, WelcomeNoticeStore } from './welcome-store.ts'
+-import type { en } from './locales.ts'
+-import { OnboardingModal } from './OnboardingModal.tsx'
+-import css from './WelcomeNotice.module.css'
+-
+-/** Registration-side dependencies of {@link WelcomeNotice}. */
+-export interface WelcomeNoticeInjected {
+-  hooks: {
+-    /** Durable or process-local acknowledgement state. */
+-    welcome: SnapshotStore<WelcomeNoticeState>
+-  }
+-  /** Welcome acknowledgement controller. */
+-  controller: WelcomeNoticeStore
+-  /** Onboarding copy. */
+-  t: (key: keyof typeof en) => string
+-}
+-
+-/** Coordinator owner props plus this step's injected face. */
+-export type WelcomeNoticeProps =
+-  PropsRuntime<'settings.onboarding'> & InjectFace<WelcomeNoticeInjected>
+-
+-/**
+- * Render the current notice until its exact copy version is acknowledged.
+- * @param props - settings-shell owner state and welcome dependencies.
+- * @returns the welcome modal or null while the step decides not to show.
+- */
+-export function WelcomeNotice(props: WelcomeNoticeProps): ReactNode {
+-  const { complete, controller, useWelcome, t } = props
+-  const state = useWelcome(snapshot => snapshot)
+-  const finished = useRef(false)
+-  const finish = useCallback((): void => {
+-    if (finished.current) return
+-    finished.current = true
+-    complete()
+-  }, [complete])
+-
+-  useEffect(() => {
+-    if (state.status === 'idle') void controller.load()
+-  }, [controller, state.status])
+-
+-  useEffect(() => {
+-    if (state.acknowledged) finish()
+-  }, [finish, state.acknowledged])
+-
+-  if (state.status === 'idle' || state.status === 'loading' || state.acknowledged) return null
+-
+-  const acknowledge = async (): Promise<void> => {
+-    if (await controller.acknowledge()) finish()
+-  }
+-  const paragraphs = t('welcomeBody').split('\n\n')
+-
+-  return (
+-    <OnboardingModal title={t('welcomeTitle')} focusTitle>
+-      <div className={css.copy}>
+-        {paragraphs.map(paragraph => <p key={paragraph}>{paragraph}</p>)}
+-      </div>
+-      {state.error === null ? null : <p className={css.error} role="alert">{t('welcomeError')}</p>}
+-      <div className={css.actions}>
+-        <Button
+-          variant="primary"
+-          className={css.primary}
+-          disabled={state.status === 'saving'}
+-          onClick={() => { void acknowledge() }}
+-        >
+-          {t('welcomeContinue')}
+-        </Button>
+-      </div>
+-    </OnboardingModal>
+-  )
+-}
+diff --git a/packages/client/ui-settings-models/src/client/index.ts b/packages/client/ui-settings-models/src/client/index.ts
+index dc7f32e..a186427 100644
+--- a/packages/client/ui-settings-models/src/client/index.ts
++++ b/packages/client/ui-settings-models/src/client/index.ts
+@@ -1,8 +1,8 @@
+ /**
+  * Models settings and product-onboarding plugin, browser half. It registers
+- * the Models page plus the ordered internal-testing and official-DeepSeek
+- * onboarding dialogs, whose UI shares this package's modal wrapper. The Host
+- * settings and credential contracts stay behind their existing wire APIs.
++ * the Models page plus the official-DeepSeek credential onboarding dialog.
++ * The Host settings and credential contracts stay behind their existing wire
++ * APIs.
+  * Export discipline:
+  * packages/client/AGENTS.md.
+  */
+@@ -20,12 +20,8 @@ import { ModelsSection } from './ModelsSection.tsx'
+ import type { ModelsSectionInjected } from './ModelsSection.tsx'
+ import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
+ import type { DeepSeekOnboardingInjected } from './DeepSeekOnboardingDialog.tsx'
+-import { WelcomeNotice } from './WelcomeNotice.tsx'
+-import type { WelcomeNoticeInjected } from './WelcomeNotice.tsx'
+-import { refreshWelcomeIfLoaded, WelcomeNoticeStore } from './welcome-store.ts'
+ import { ModelsSettingsStore } from './store.ts'
+ import { en, zh, type ModelsKey } from './locales.ts'
+-import { WELCOME_NOTICE_SETTINGS_NAMESPACE } from '../onboarding-copy.ts'
+ 
+ export type { ModelsSectionInjected, ModelsSectionProps } from './ModelsSection.tsx'
+ export type { ModelsKey } from './locales.ts'
+@@ -85,32 +81,15 @@ export function apply(ctx: ClientContext): void {
+     api: connection.api,
+     t,
+   })
+-  const welcomeController = new WelcomeNoticeStore(
+-    connection.api,
+-    connection.isLoopback ? 'host' : 'memory',
+-  )
+-  const welcomeInjected = (): WelcomeNoticeInjected => ({
+-    controller: welcomeController,
+-    hooks: { welcome: welcomeController.store },
+-    t,
+-  })
+-
+   // Pushed invalidations converge every open surface without polling: any
+   // settings/credentials/topology change refetches once the page loaded.
+   ctx.effect(() => {
+     const refreshModels = (): void => { refreshIfLoaded(controller) }
+-    const refreshAll = (): void => {
+-      refreshModels()
+-      refreshWelcomeIfLoaded(welcomeController)
+-    }
+     const disposers = [
+-      ctx.remote.$on('settings/document-updated', (ns) => {
+-        refreshModels()
+-        if (ns === WELCOME_NOTICE_SETTINGS_NAMESPACE) refreshWelcomeIfLoaded(welcomeController)
+-      }),
++      ctx.remote.$on('settings/document-updated', refreshModels),
+       ctx.remote.$on('credentials/updated', refreshModels),
+       ctx.remote.$on('llm/adapters-updated', refreshModels),
+-      ctx.on('connection/reset', refreshAll),
++      ctx.on('connection/reset', refreshModels),
+     ]
+     return () => { for (const dispose of disposers) dispose() }
+   }, 'ui-settings-models: pushed invalidations')
+@@ -122,12 +101,6 @@ export function apply(ctx: ClientContext): void {
+     label: () => t('nav'),
+     inject: injected,
+   }, ModelsSection))
+-  ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+-    name: 'settings.onboarding',
+-    id: 'welcome-notice',
+-    order: -100,
+-    inject: welcomeInjected,
+-  }, WelcomeNotice))
+   ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+     name: 'settings.onboarding',
+     id: 'deepseek-official',
+diff --git a/packages/client/ui-settings-models/src/client/locales.ts b/packages/client/ui-settings-models/src/client/locales.ts
+index a49a4f0..aa791e9 100644
+--- a/packages/client/ui-settings-models/src/client/locales.ts
++++ b/packages/client/ui-settings-models/src/client/locales.ts
+@@ -1,7 +1,5 @@
+ /** Copy dictionaries for the Models settings section. */
+ 
+-import { WELCOME_NOTICE_COPY } from '../onboarding-copy.ts'
+-
+ /** English strings (the key-set source of truth for this pair). */
+ export const en = {
+   nav: 'Models',
+@@ -87,10 +85,6 @@ export const en = {
+   customNeedsModels: 'A custom provider needs at least one model.',
+   create: 'Create provider',
+   creating: 'Creating\u2026',
+-  welcomeTitle: WELCOME_NOTICE_COPY.en.title,
+-  welcomeBody: WELCOME_NOTICE_COPY.en.body,
+-  welcomeContinue: WELCOME_NOTICE_COPY.en.continueLabel,
+-  welcomeError: 'The acknowledgement could not be saved. Please try again.',
+   onboardingTitle: 'Add an API key to get started',
+   onboardingDescription: 'Configure the official DeepSeek provider to start building.',
+   onboardingLater: 'Configure later',
+@@ -187,10 +181,6 @@ export const zh: { [Key in keyof typeof en]: string } = {
+   customNeedsModels: '自定义提供方至少需要一个模型。',
+   create: '创建提供方',
+   creating: '创建中\u2026',
+-  welcomeTitle: WELCOME_NOTICE_COPY.zh.title,
+-  welcomeBody: WELCOME_NOTICE_COPY.zh.body,
+-  welcomeContinue: WELCOME_NOTICE_COPY.zh.continueLabel,
+-  welcomeError: '暂时无法保存确认状态，请重试。',
+   onboardingTitle: '添加一个 API Key 开始使用',
+   onboardingDescription: '配置 DeepSeek 官方模型，即可开始使用。',
+   onboardingLater: '稍后配置',
+diff --git a/packages/client/ui-settings-models/src/client/welcome-store.ts b/packages/client/ui-settings-models/src/client/welcome-store.ts
+deleted file mode 100644
+index 6e139f1..0000000
+--- a/packages/client/ui-settings-models/src/client/welcome-store.ts
++++ /dev/null
+@@ -1,126 +0,0 @@
+-/** Welcome-notice state, durable when the browser may use Host settings. */
+-
+-import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+-import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+-import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+-import {
+-  WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE, WELCOME_NOTICE_VERSION,
+-} from '../onboarding-copy.ts'
+-
+-/** State rendered by the welcome step. */
+-export interface WelcomeNoticeState {
+-  status: 'idle' | 'loading' | 'ready' | 'saving' | 'error'
+-  acknowledged: boolean
+-  error: string | null
+-}
+-
+-function messageOf(error: unknown): string {
+-  return error instanceof Error ? error.message : String(error)
+-}
+-
+-function acknowledgementOf(view: SettingsNamespaceView): string | undefined {
+-  if (typeof view.value !== 'object' || view.value === null) return undefined
+-  const value = (view.value as Record<string, unknown>)[WELCOME_NOTICE_ACK_FIELD]
+-  return typeof value === 'string' ? value : undefined
+-}
+-
+-/** Coordinates durable Host acknowledgement or a process-local remote fallback. */
+-export class WelcomeNoticeStore {
+-  /** uSES-safe state source shared by the registered welcome step. */
+-  readonly store: SnapshotStore<WelcomeNoticeState> = createSnapshotStore({
+-    status: 'idle', acknowledged: false, error: null,
+-  })
+-
+-  private generation = 0
+-
+-  /**
+-   * @param api - settings wire face used for durable reads and writes.
+-   * @param persistence - remote browsers use memory because settings is loopback-only.
+-   */
+-  constructor(
+-    private readonly api: Pick<IApiClient, 'settings'>,
+-    private readonly persistence: 'host' | 'memory' = 'host',
+-  ) {}
+-
+-  /** Load the acknowledgement from Host settings or initialize process-local state. */
+-  async load(): Promise<void> {
+-    const generation = ++this.generation
+-    if (this.persistence === 'memory') {
+-      this.store.update((state) => { state.status = 'ready'; state.error = null })
+-      return
+-    }
+-    this.store.update((state) => { state.status = 'loading'; state.error = null })
+-    try {
+-      const response = await this.api.settings.describe({})
+-      if (!response.result.ok) throw new Error(response.result.error.message)
+-      const view = response.result.value.namespaces.find(
+-        candidate => candidate.ns === WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-      )
+-      if (view === undefined) throw new Error('welcome acknowledgement settings are unavailable')
+-      if (generation !== this.generation) return
+-      this.store.update((state) => {
+-        state.status = 'ready'
+-        state.acknowledged = acknowledgementOf(view) === WELCOME_NOTICE_VERSION
+-        state.error = null
+-      })
+-    } catch (error) {
+-      if (generation !== this.generation) return
+-      this.store.update((state) => {
+-        state.status = 'error'
+-        state.acknowledged = false
+-        state.error = messageOf(error)
+-      })
+-    }
+-  }
+-
+-  /**
+-   * Persist this copy version, or advance only this process for a remote browser.
+-   * @returns true when the selected persistence mode accepted the acknowledgement.
+-   */
+-  async acknowledge(): Promise<boolean> {
+-    const generation = ++this.generation
+-    if (this.persistence === 'memory') {
+-      this.store.update((state) => {
+-        state.status = 'ready'
+-        state.acknowledged = true
+-        state.error = null
+-      })
+-      return true
+-    }
+-    this.store.update((state) => { state.status = 'saving'; state.error = null })
+-    try {
+-      const response = await this.api.settings.mutate({
+-        ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-        ops: [{ op: 'set', path: [WELCOME_NOTICE_ACK_FIELD], value: WELCOME_NOTICE_VERSION }],
+-      })
+-      if (!response.result.ok) throw new Error(response.result.error.message)
+-      if (generation === this.generation) {
+-        this.store.update((state) => {
+-          state.status = 'ready'
+-          state.acknowledged = true
+-          state.error = null
+-        })
+-      }
+-      return true
+-    } catch (error) {
+-      if (generation === this.generation) {
+-        this.store.update((state) => {
+-          state.status = 'error'
+-          state.acknowledged = false
+-          state.error = messageOf(error)
+-        })
+-      }
+-      return false
+-    }
+-  }
+-}
+-
+-/**
+- * Refresh only after welcome state has left idle. A memory-mode load retains
+- * acknowledgement so reconnect does not reopen a process-local notice.
+- * @param controller - welcome state owner whose current status decides whether to load.
+- */
+-export function refreshWelcomeIfLoaded(controller: WelcomeNoticeStore): void {
+-  if (controller.store.getSnapshot().status === 'idle') return
+-  void controller.load()
+-}
+diff --git a/packages/client/ui-settings-models/src/onboarding-copy.ts b/packages/client/ui-settings-models/src/onboarding-copy.ts
+deleted file mode 100644
+index d52371a..0000000
+--- a/packages/client/ui-settings-models/src/onboarding-copy.ts
++++ /dev/null
+@@ -1,25 +0,0 @@
+-/** Durable settings namespace for product-wide GUI onboarding facts. */
+-export const WELCOME_NOTICE_SETTINGS_NAMESPACE = 'ui-onboarding'
+-
+-/** Field storing the last welcome notice version the user acknowledged. */
+-export const WELCOME_NOTICE_ACK_FIELD = 'welcomeNoticeVersion'
+-
+-/**
+- * Bump only when the notice changes materially and every user should see it
+- * again. The acknowledgement is compared for exact equality.
+- */
+-export const WELCOME_NOTICE_VERSION = '2026-08-13.1'
+-
+-/** The complete editable internal-testing notice in both supported GUI locales. */
+-export const WELCOME_NOTICE_COPY = {
+-  zh: {
+-    title: '内测声明',
+-    body: 'DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。',
+-    continueLabel: '继续',
+-  },
+-  en: {
+-    title: 'Internal Testing Notice',
+-    body: "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
+-    continueLabel: 'Continue',
+-  },
+-} as const
+diff --git a/packages/client/ui-settings-models/tests/apply.client.spec.ts b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+index 39ba3e4..042ac53 100644
+--- a/packages/client/ui-settings-models/tests/apply.client.spec.ts
++++ b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+@@ -8,7 +8,6 @@ import { TestRemote, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-t
+ import { apply, inject, refreshIfLoaded } from '@deepseek-ai/dsh-client-ui-settings-models/client'
+ import { ModelsSection } from '../src/client/ModelsSection.tsx'
+ import { DeepSeekOnboardingDialog } from '../src/client/DeepSeekOnboardingDialog.tsx'
+-import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
+ 
+ // The service reads its initial locale from the browser; these specs assert
+ // the shipped Chinese copy, so they state the browser they assume.
+@@ -62,11 +61,7 @@ describe('ui-settings-models apply', () => {
+     expect(typeof injected.useSnapshot).toBe('function')
+     expect(injected.api).toBeDefined()
+     const onboarding = before.slots.entries('settings.onboarding')
+-    expect(onboarding).toHaveLength(2)
+-    expect(onboarding.find(entry => entry.options.id === 'welcome-notice')).toMatchObject({
+-      component: WelcomeNotice,
+-      options: { id: 'welcome-notice', order: -100 },
+-    })
++    expect(onboarding).toHaveLength(1)
+     const deepSeek = onboarding.find(entry => entry.options.id === 'deepseek-official')!
+     expect(deepSeek.component).toBe(DeepSeekOnboardingDialog)
+     expect(deepSeek.options).toMatchObject({ id: 'deepseek-official', order: 0 })
+@@ -83,7 +78,7 @@ describe('ui-settings-models apply', () => {
+     declare(after.slots)
+     await Promise.resolve()
+     expect(after.slots.entries('settings.section')[0]!.component).toBe(ModelsSection)
+-    expect(after.slots.entries('settings.onboarding')).toHaveLength(2)
++    expect(after.slots.entries('settings.onboarding')).toHaveLength(1)
+     // The self-inflicted ledger notifications hit the duplicate guard.
+     expect(after.slots.entries('settings.section')).toHaveLength(1)
+   })
+@@ -122,7 +117,7 @@ describe('ui-settings-models apply', () => {
+     declare(b.slots)
+     await Promise.resolve()
+     expect(b.slots.entries('settings.section')[0]!.component).toBe(ModelsSection)
+-    expect(b.slots.entries('settings.onboarding')).toHaveLength(2)
++    expect(b.slots.entries('settings.onboarding')).toHaveLength(1)
+     // The locale path also recovers through the same ledger re-check.
+     b.locale.setLocale('en')
+     expect(resolveSlotLabel(b.slots.entries('settings.section')[0]!.options.label)).toBe('Models')
+@@ -143,21 +138,6 @@ describe('ui-settings-models apply', () => {
+     expect(() => b.locale.register('settings.models', 'en', {})).not.toThrow()
+   })
+ 
+-  it('keeps remote-browser acknowledgement in process memory', async () => {
+-    const b = await bench(false)
+-    declare(b.slots)
+-    await b.ctx.plugin({ inject: [...inject], apply }).await()
+-    const entry = b.slots.entries('settings.onboarding')
+-      .find(candidate => candidate.options.id === 'welcome-notice')!
+-    const injected = (
+-      entry.inject as unknown as () => import('../src/client/WelcomeNotice.tsx').WelcomeNoticeInjected
+-    )()
+-
+-    await injected.controller.load()
+-    expect(injected.controller.store.getSnapshot()).toEqual({
+-      status: 'ready', acknowledged: false, error: null,
+-    })
+-  })
+ })
+ 
+ describe('pushed invalidations', () => {
+@@ -203,25 +183,4 @@ describe('pushed invalidations', () => {
+     b.ctx.remote.$dispatch('credentials/updated', ['DEEPSEEK_API_KEY'])
+     expect(load).toHaveBeenCalledTimes(1)
+   })
+-
+-  it('routes only the onboarding namespace invalidation into welcome state', async () => {
+-    const b = await bench()
+-    declare(b.slots)
+-    await b.ctx.plugin({ inject: [...inject], apply }).await()
+-    const entry = b.slots.entries('settings.onboarding')
+-      .find(candidate => candidate.options.id === 'welcome-notice')!
+-    const injected = (
+-      entry.inject as unknown as
+-      () => import('../src/client/WelcomeNotice.tsx').WelcomeNoticeInjected
+-    )()
+-    injected.hooks.welcome.update((state) => { state.status = 'ready' })
+-    const load = vi.spyOn(injected.controller, 'load').mockResolvedValue()
+-
+-    b.ctx.remote.$dispatch('settings/document-updated', ['llm-deepseek', 1])
+-    expect(load).not.toHaveBeenCalled()
+-    b.ctx.remote.$dispatch('settings/document-updated', ['ui-onboarding', 2])
+-    expect(load).toHaveBeenCalledOnce()
+-    b.ctx.emit('connection/reset')
+-    expect(load).toHaveBeenCalledTimes(2)
+-  })
+ })
+diff --git a/packages/client/ui-settings-models/tests/welcome-notice.client.spec.tsx b/packages/client/ui-settings-models/tests/welcome-notice.client.spec.tsx
+deleted file mode 100644
+index 8b8858c..0000000
+--- a/packages/client/ui-settings-models/tests/welcome-notice.client.spec.tsx
++++ /dev/null
+@@ -1,130 +0,0 @@
+-// @vitest-environment jsdom
+-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+-import { afterEach, describe, expect, it, vi } from 'vitest'
+-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+-import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
+-import type { WelcomeNoticeProps } from '../src/client/WelcomeNotice.tsx'
+-import { WelcomeNoticeStore } from '../src/client/welcome-store.ts'
+-import { en, zh } from '../src/client/locales.ts'
+-import {
+-  WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_COPY, WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-  WELCOME_NOTICE_VERSION,
+-} from '../src/onboarding-copy.ts'
+-
+-afterEach(() => {
+-  cleanup()
+-  document.getElementById('root')?.remove()
+-})
+-
+-function response<T>(value: T) {
+-  return { rpcId: 'welcome-rpc' as never, result: { ok: true as const, value } }
+-}
+-
+-function mount(version?: string, mutateImpl: () => Promise<unknown> = () => Promise.resolve(response({}))) {
+-  const appRoot = document.createElement('div')
+-  appRoot.id = 'root'
+-  document.body.append(appRoot)
+-  const mutate = vi.fn(mutateImpl)
+-  const api = {
+-    settings: {
+-      describe: () => Promise.resolve(response({
+-        writable: true,
+-        hasDocument: false,
+-        namespaces: [{
+-          ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-          schema: {},
+-          value: version === undefined ? {} : { [WELCOME_NOTICE_ACK_FIELD]: version },
+-          base: {},
+-          user: {},
+-          applies: 'live' as const,
+-          secrets: [],
+-          revision: 0,
+-        }],
+-      })),
+-      mutate,
+-    },
+-  }
+-  const controller = new WelcomeNoticeStore(api as never)
+-  const complete = vi.fn()
+-  const unusedHook = (() => { throw new Error('unused standard hook') }) as never
+-  const props: WelcomeNoticeProps = {
+-    stepId: 'welcome-notice',
+-    complete,
+-    openSection: vi.fn(),
+-    useSessions: unusedHook,
+-    useWorkspaces: unusedHook,
+-    controller,
+-    useWelcome: bindSnapshotSelector(controller.store),
+-    t: key => zh[key],
+-  }
+-  return { ...render(<WelcomeNotice {...props} />), complete, controller, mutate, appRoot }
+-}
+-
+-describe('WelcomeNotice', () => {
+-  it('uses the exact owner copy in both GUI locales', () => {
+-    expect(WELCOME_NOTICE_COPY.en).toEqual({
+-      title: 'Internal Testing Notice',
+-      body: "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
+-      continueLabel: 'Continue',
+-    })
+-    expect(en.welcomeBody).toBe(WELCOME_NOTICE_COPY.en.body)
+-    expect(zh.welcomeBody).toBe(WELCOME_NOTICE_COPY.zh.body)
+-  })
+-
+-  it('renders one blocking modal action and focuses the title', async () => {
+-    const h = mount()
+-    const dialog = await screen.findByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
+-    for (const paragraph of WELCOME_NOTICE_COPY.zh.body.split('\n\n')) {
+-      expect(screen.getByText(paragraph, { exact: true })).toBeTruthy()
+-    }
+-    expect(dialog.querySelectorAll('p')).toHaveLength(2)
+-    expect(dialog.querySelectorAll('button')).toHaveLength(1)
+-    expect(screen.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel })).toBeTruthy()
+-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: WELCOME_NOTICE_COPY.zh.title }))
+-    expect(h.appRoot.inert).toBe(true)
+-
+-    fireEvent.keyDown(document, { key: 'Escape' })
+-    fireEvent.click(document.querySelector('[class*="mask"]')!)
+-    expect(h.complete).not.toHaveBeenCalled()
+-    expect(screen.getByRole('dialog')).toBeTruthy()
+-  })
+-
+-  it('completes only after the acknowledgement write commits', async () => {
+-    const h = mount()
+-    await screen.findByRole('dialog')
+-    fireEvent.click(screen.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel }))
+-    await act(async () => { await Promise.resolve() })
+-    expect(h.mutate).toHaveBeenCalledOnce()
+-    expect(h.complete).toHaveBeenCalledOnce()
+-  })
+-
+-  it('skips itself when this exact version was already acknowledged', async () => {
+-    const h = mount(WELCOME_NOTICE_VERSION)
+-    await act(async () => { await h.controller.load() })
+-    expect(screen.queryByRole('dialog')).toBeNull()
+-    expect(h.complete).toHaveBeenCalledOnce()
+-  })
+-
+-  it('keeps the sole action disabled while saving and reports a refused write', async () => {
+-    let resolveWrite!: (value: unknown) => void
+-    const write = new Promise<unknown>((resolve) => { resolveWrite = resolve })
+-    const h = mount(undefined, () => write)
+-    await screen.findByRole('dialog')
+-    const action = screen.getByRole<HTMLButtonElement>('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel })
+-    fireEvent.click(action)
+-    expect(action.disabled).toBe(true)
+-    resolveWrite({
+-      rpcId: 'welcome-refused' as never,
+-      result: {
+-        ok: false,
+-        error: {
+-          code: 'settings-rejected',
+-          message: 'read only',
+-          details: { ns: WELCOME_NOTICE_SETTINGS_NAMESPACE },
+-        },
+-      },
+-    })
+-    expect((await screen.findByRole('alert')).textContent).toBe(zh.welcomeError)
+-    expect(h.complete).not.toHaveBeenCalled()
+-  })
+-})
+diff --git a/packages/client/ui-settings-models/tests/welcome-store.client.spec.ts b/packages/client/ui-settings-models/tests/welcome-store.client.spec.ts
+deleted file mode 100644
+index e1fa757..0000000
+--- a/packages/client/ui-settings-models/tests/welcome-store.client.spec.ts
++++ /dev/null
+@@ -1,199 +0,0 @@
+-import { describe, expect, it, vi } from 'vitest'
+-import type { RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
+-import { refreshWelcomeIfLoaded, WelcomeNoticeStore } from '../src/client/welcome-store.ts'
+-import {
+-  WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE, WELCOME_NOTICE_VERSION,
+-} from '../src/onboarding-copy.ts'
+-
+-let rpc = 0
+-function ok<T>(value: T): RpcResponse<T> {
+-  return { rpcId: `welcome-${rpc++}` as never, result: { ok: true, value } }
+-}
+-
+-function namespace(version?: string) {
+-  return {
+-    ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-    schema: {},
+-    value: version === undefined ? {} : { [WELCOME_NOTICE_ACK_FIELD]: version },
+-    base: {},
+-    user: {},
+-    applies: 'live' as const,
+-    secrets: [],
+-    revision: 0,
+-  }
+-}
+-
+-function deferred<T>() {
+-  let resolve!: (value: T) => void
+-  let reject!: (reason: unknown) => void
+-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+-  return { promise, resolve, reject }
+-}
+-
+-describe('WelcomeNoticeStore', () => {
+-  it('acknowledges in memory without calling loopback-only settings APIs', async () => {
+-    const describe = vi.fn()
+-    const mutate = vi.fn()
+-    const controller = new WelcomeNoticeStore({ settings: { describe, mutate } } as never, 'memory')
+-
+-    await controller.load()
+-    expect(controller.store.getSnapshot()).toEqual({ status: 'ready', acknowledged: false, error: null })
+-    await expect(controller.acknowledge()).resolves.toBe(true)
+-    expect(controller.store.getSnapshot()).toEqual({ status: 'ready', acknowledged: true, error: null })
+-    await controller.load()
+-    expect(controller.store.getSnapshot()).toEqual({ status: 'ready', acknowledged: true, error: null })
+-    expect(describe).not.toHaveBeenCalled()
+-    expect(mutate).not.toHaveBeenCalled()
+-  })
+-
+-  it('acknowledges only the exact current copy version', async () => {
+-    for (const [version, acknowledged] of [
+-      [undefined, false],
+-      ['older-copy', false],
+-      [WELCOME_NOTICE_VERSION, true],
+-    ] as const) {
+-      const api = {
+-        settings: {
+-          describe: vi.fn(() => Promise.resolve(ok({
+-            writable: true, hasDocument: false, namespaces: [namespace(version)],
+-          }))),
+-        },
+-      }
+-      const controller = new WelcomeNoticeStore(api as never)
+-      await controller.load()
+-      expect(controller.store.getSnapshot()).toMatchObject({ status: 'ready', acknowledged })
+-    }
+-  })
+-
+-  it('persists the owner version through one idempotent path mutation', async () => {
+-    const mutate = vi.fn(() => Promise.resolve(ok(namespace(WELCOME_NOTICE_VERSION))))
+-    const controller = new WelcomeNoticeStore({ settings: { mutate } } as never)
+-    await expect(controller.acknowledge()).resolves.toBe(true)
+-    expect(mutate).toHaveBeenCalledWith({
+-      ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+-      ops: [{ op: 'set', path: [WELCOME_NOTICE_ACK_FIELD], value: WELCOME_NOTICE_VERSION }],
+-    })
+-    expect(controller.store.getSnapshot()).toMatchObject({ status: 'ready', acknowledged: true })
+-  })
+-
+-  it('keeps the notice pending when loading or persistence fails', async () => {
+-    const load = new WelcomeNoticeStore({
+-      settings: { describe: () => Promise.reject(new Error('offline')) },
+-    } as never)
+-    await load.load()
+-    expect(load.store.getSnapshot()).toEqual({ status: 'error', acknowledged: false, error: 'offline' })
+-
+-    const save = new WelcomeNoticeStore({
+-      settings: { mutate: () => Promise.reject(new Error('disk full')) },
+-    } as never)
+-    await expect(save.acknowledge()).resolves.toBe(false)
+-    expect(save.store.getSnapshot()).toEqual({ status: 'error', acknowledged: false, error: 'disk full' })
+-
+-    const nonError = new WelcomeNoticeStore({
+-      // Durable/wire failures are unknown; exercise containment of a non-Error rejection.
+-      settings: { describe: () => Promise.reject(new Error('offline string')) },
+-    } as never)
+-    await nonError.load()
+-    expect(nonError.store.getSnapshot().error).toBe('offline string')
+-  })
+-
+-  it('reports business failures, missing namespaces, and malformed durable values', async () => {
+-    for (const describe of [
+-      () => Promise.resolve({
+-        rpcId: 'failed' as never,
+-        result: { ok: false as const, error: { code: 'internal' as const, message: 'denied', details: {} } },
+-      }),
+-      () => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: [] })),
+-    ]) {
+-      const controller = new WelcomeNoticeStore({ settings: { describe } } as never)
+-      await controller.load()
+-      expect(controller.store.getSnapshot().status).toBe('error')
+-    }
+-
+-    for (const value of [null, 42, { [WELCOME_NOTICE_ACK_FIELD]: 42 }]) {
+-      const controller = new WelcomeNoticeStore({
+-        settings: { describe: () => Promise.resolve(ok({
+-          writable: true,
+-          hasDocument: false,
+-          namespaces: [{ ...namespace(), value }],
+-        })) },
+-      } as never)
+-      await controller.load()
+-      expect(controller.store.getSnapshot()).toMatchObject({ status: 'ready', acknowledged: false })
+-    }
+-
+-    const save = new WelcomeNoticeStore({
+-      settings: { mutate: () => Promise.resolve({
+-        rpcId: 'failed-save' as never,
+-        result: {
+-          ok: false,
+-          error: {
+-            code: 'settings-rejected',
+-            message: 'denied',
+-            details: { ns: WELCOME_NOTICE_SETTINGS_NAMESPACE },
+-          },
+-        },
+-      }) },
+-    } as never)
+-    await expect(save.acknowledge()).resolves.toBe(false)
+-    expect(save.store.getSnapshot().error).toBe('denied')
+-  })
+-
+-  it('lets the latest load win over stale success and failure', async () => {
+-    const first = deferred<ReturnType<typeof ok>>()
+-    const describe = vi.fn()
+-      .mockImplementationOnce(() => first.promise)
+-      .mockImplementationOnce(() => Promise.resolve(ok({
+-        writable: true, hasDocument: false, namespaces: [namespace()],
+-      })))
+-    const controller = new WelcomeNoticeStore({ settings: { describe } } as never)
+-    const stale = controller.load()
+-    await controller.load()
+-    first.resolve(ok({
+-      writable: true, hasDocument: false, namespaces: [namespace(WELCOME_NOTICE_VERSION)],
+-    }))
+-    await stale
+-    expect(controller.store.getSnapshot().acknowledged).toBe(false)
+-
+-    const failed = deferred<ReturnType<typeof ok>>()
+-    describe
+-      .mockImplementationOnce(() => failed.promise)
+-      .mockImplementationOnce(() => Promise.resolve(ok({
+-        writable: true, hasDocument: false, namespaces: [namespace(WELCOME_NOTICE_VERSION)],
+-      })))
+-    const staleFailure = controller.load()
+-    await controller.load()
+-    failed.reject('stale failure')
+-    await staleFailure
+-    expect(controller.store.getSnapshot()).toMatchObject({ status: 'ready', acknowledged: true, error: null })
+-  })
+-
+-  it('contains stale acknowledgement settlements and refreshes only a loaded store', async () => {
+-    const write = deferred<ReturnType<typeof ok>>()
+-    const describe = vi.fn(() => Promise.resolve(ok({
+-      writable: true, hasDocument: false, namespaces: [namespace()],
+-    })))
+-    const controller = new WelcomeNoticeStore({
+-      settings: { mutate: () => write.promise, describe },
+-    } as never)
+-    refreshWelcomeIfLoaded(controller)
+-    expect(describe).not.toHaveBeenCalled()
+-    const staleWrite = controller.acknowledge()
+-    await controller.load()
+-    write.resolve(ok(namespace(WELCOME_NOTICE_VERSION)))
+-    await expect(staleWrite).resolves.toBe(true)
+-    expect(controller.store.getSnapshot().acknowledged).toBe(false)
+-    refreshWelcomeIfLoaded(controller)
+-    await vi.waitFor(() => { expect(describe).toHaveBeenCalledTimes(2) })
+-
+-    const failedWrite = deferred<ReturnType<typeof ok>>()
+-    const staleFailure = new WelcomeNoticeStore({
+-      settings: { mutate: () => failedWrite.promise, describe },
+-    } as never)
+-    const pending = staleFailure.acknowledge()
+-    await staleFailure.load()
+-    failedWrite.reject('late failure')
+-    await expect(pending).resolves.toBe(false)
+-    expect(staleFailure.store.getSnapshot().status).toBe('ready')
+-  })
+-})

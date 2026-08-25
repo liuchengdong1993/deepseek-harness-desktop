@@ -1,12 +1,15 @@
 node_modules/
 dist/
 out/
+output/playwright/
+.playwright-cli/
 *.log
 .DS_Store
 
 # Bundled artifacts (regenerated; too large for git)
 harness/
 harness.tar
+harness.bundle.json
 runtime/
 
 # Generated icon intermediates

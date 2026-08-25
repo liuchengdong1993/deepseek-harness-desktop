@@ -1,14 +1,19 @@
 'use strict';
 
-// Generate a monochrome whale tray icon (black silhouette on transparent) at a
-// Retina-friendly size, from the whale path in assets/deepseek-whale.svg.
-//   node scripts/gen-tray-icon.js
+// Generate a monochrome whale tray icon (black silhouette on transparent) from
+// the whale path in assets/deepseek-whale.svg.
+//   node scripts/gen-tray-icon.js 18 assets/trayTemplate.png
+//   node scripts/gen-tray-icon.js 36 assets/trayTemplate@2x.png
 
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const SIZE = 36; // output px (18pt @2x)
+const SIZE = Number(process.argv[2] || 18);
+const OUTPUT = process.argv[3] || 'assets/trayTemplate.png';
+if (!Number.isInteger(SIZE) || SIZE < 1 || SIZE > 512) {
+  throw new Error('icon size must be an integer between 1 and 512');
+}
 const SVG = path.join(__dirname, '..', 'assets', 'deepseek-whale.svg');
 
 const svg = fs.readFileSync(SVG, 'utf8');
@@ -141,6 +146,6 @@ const png = Buffer.concat([
   chunk('IEND', Buffer.alloc(0)),
 ]);
 
-const outp = path.join(__dirname, '..', 'assets', 'trayTemplate.png');
+const outp = path.resolve(path.join(__dirname, '..'), OUTPUT);
 fs.writeFileSync(outp, png);
 console.log(`wrote ${outp} (${SIZE}x${SIZE}, ${png.length} bytes)`);

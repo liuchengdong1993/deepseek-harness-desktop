@@ -1,0 +1,2829 @@
+diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+index 210ec0b..07c8629 100644
+--- a/packages/api/remotes/src/client/index.ts
++++ b/packages/api/remotes/src/client/index.ts
+@@ -9,7 +9,11 @@ import messageFeedbackRemote from '@deepseek-ai/dsh-message-feedback/remote'
+ import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
+ 
+ export type { TypertClientRemote as ClientRemote } from '@deepseek-ai/dsh-typert-protocol'
+-export type { PluginInventorySnapshot } from '@deepseek-ai/dsh-host-plugin-inventory/types'
++export type {
++  PluginInventorySnapshot,
++  PluginManagementReceipt,
++  PluginManagementRequest,
++} from '@deepseek-ai/dsh-host-plugin-inventory/types'
+ export type {} from '@deepseek-ai/dsh-commands/remote'
+ export type {} from '@deepseek-ai/dsh-goal/remote'
+ export type {} from '@deepseek-ai/dsh-host-plugin-inventory/remote'
+diff --git a/packages/client/ui-settings-plugin-inventory/package.json b/packages/client/ui-settings-plugin-inventory/package.json
+index 3fbd5c2..1f9d592 100644
+--- a/packages/client/ui-settings-plugin-inventory/package.json
++++ b/packages/client/ui-settings-plugin-inventory/package.json
+@@ -33,6 +33,8 @@
+     "client": {
+       "inject": [
+         "@deepseek-ai/dsh-api-remotes",
++        "@deepseek-ai/dsh-client-connection",
++        "@deepseek-ai/dsh-client-schema-form",
+         "@deepseek-ai/dsh-client-runtime",
+         "@deepseek-ai/dsh-client-ui-settings",
+         "@deepseek-ai/dsh-client-locale"
+@@ -47,8 +49,10 @@
+   "license": "MIT",
+   "peerDependencies": {
+     "@deepseek-ai/dsh-api-remotes": "workspace:^",
++    "@deepseek-ai/dsh-client-connection": "workspace:^",
+     "@deepseek-ai/dsh-client-locale": "workspace:^",
+     "@deepseek-ai/dsh-client-runtime": "workspace:^",
++    "@deepseek-ai/dsh-client-schema-form": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-primitives": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-settings": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-slots": "workspace:^",
+@@ -58,8 +62,10 @@
+   },
+   "devDependencies": {
+     "@deepseek-ai/dsh-api-remotes": "workspace:^",
++    "@deepseek-ai/dsh-client-connection": "workspace:^",
+     "@deepseek-ai/dsh-client-locale": "workspace:^",
+     "@deepseek-ai/dsh-client-runtime": "workspace:^",
++    "@deepseek-ai/dsh-client-schema-form": "workspace:^",
+     "@deepseek-ai/dsh-client-test-runtime": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-primitives": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-settings": "workspace:^",
+diff --git a/packages/client/ui-settings-plugin-inventory/src/client/PluginConfigurationSection.tsx b/packages/client/ui-settings-plugin-inventory/src/client/PluginConfigurationSection.tsx
+new file mode 100644
+index 0000000..abf8e63
+--- /dev/null
++++ b/packages/client/ui-settings-plugin-inventory/src/client/PluginConfigurationSection.tsx
+@@ -0,0 +1,391 @@
++import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
++import type { SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
++import {
++  deletePath, getPath, hasPath, rehydrateSchema, setPath,
++  type SchemaNode,
++} from '@deepseek-ai/dsh-client-schema-form'
++import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { PluginInventoryLocaleKey } from './locales.ts'
++import css from './PluginInventorySettingsTab.module.css'
++
++/** A redacted, Web-form-exposed settings namespace collection. */
++export interface PluginConfigurationSnapshot {
++  /** Whether the settings provider accepts writes. */
++  readonly writable: boolean
++  /** Namespaces whose owners explicitly opted into the generic Web form. */
++  readonly namespaces: readonly SettingsNamespaceView[]
++}
++
++/** Host operations the plugin configuration section needs. */
++export interface PluginConfigurationInjected {
++  /** Read the current Web-form namespace collection. */
++  listConfiguration: () => Promise<PluginConfigurationSnapshot>
++  /** Apply path-addressed changes to one namespace at the revision the editor opened. */
++  mutateConfiguration: (
++    ns: string,
++    ops: readonly SettingsPathOpView[],
++    expectedRevision: number,
++  ) => Promise<SettingsNamespaceView>
++}
++
++interface PluginConfigurationSectionProps extends PluginConfigurationInjected {
++  /** Localized copy supplied by the containing Settings contribution. */
++  t: (key: PluginInventoryLocaleKey) => string
++}
++
++type ConfigurationState =
++  | { readonly status: 'loading' }
++  | { readonly status: 'error' }
++  | { readonly status: 'ready'; readonly snapshot: PluginConfigurationSnapshot }
++
++type ConfigurationSaveFailure = 'conflict' | 'rejected'
++
++/** A JSON-backed editor for structural values that contain no write-only fields. */
++function JsonField({
++  label,
++  value,
++  disabled,
++  onChange,
++  t,
++}: {
++  readonly label: string
++  readonly value: unknown
++  readonly disabled: boolean
++  readonly onChange: (value: unknown) => void
++  readonly t: PluginConfigurationSectionProps['t']
++}): ReactNode {
++  const [draft, setDraft] = useState(() => JSON.stringify(value ?? {}, null, 2))
++  const [invalid, setInvalid] = useState(false)
++
++  useEffect(() => {
++    setDraft(JSON.stringify(value ?? {}, null, 2))
++    setInvalid(false)
++  }, [value])
++
++  return (
++    <label className={css.configField}>
++      <span>{label}</span>
++      <textarea
++        className={css.configTextarea}
++        value={draft}
++        aria-label={label}
++        disabled={disabled}
++        spellCheck={false}
++        onChange={(event) => { setDraft(event.currentTarget.value); setInvalid(false) }}
++        onBlur={() => {
++          try {
++            onChange(JSON.parse(draft))
++          } catch {
++            setInvalid(true)
++          }
++        }}
++      />
++      {invalid ? <span className={css.configFieldError}>{t('invalidJson')}</span> : null}
++    </label>
++  )
++}
++
++/** Render and persist one owner-approved plugin settings namespace. */
++function PluginConfigurationForm({
++  initial,
++  writable,
++  mutateConfiguration,
++  onRefresh,
++  t,
++}: {
++  readonly initial: SettingsNamespaceView
++  readonly writable: boolean
++  readonly mutateConfiguration: PluginConfigurationInjected['mutateConfiguration']
++  /** Re-read all approved configuration after an optimistic-concurrency refusal. */
++  readonly onRefresh: () => void
++  readonly t: PluginConfigurationSectionProps['t']
++}): ReactNode {
++  const [namespace, setNamespace] = useState(initial)
++  const [draft, setDraft] = useState<Record<string, unknown>>(() => userDraft(initial))
++  const [changes, setChanges] = useState<ReadonlyMap<string, SettingsPathOpView>>(() => new Map())
++  const [busy, setBusy] = useState(false)
++  const [failure, setFailure] = useState<ConfigurationSaveFailure | undefined>(undefined)
++  const schema = useMemo(() => rehydrateSchema(namespace.schema), [namespace.schema])
++  const disabled = !writable || busy
++
++  useEffect(() => {
++    setNamespace(initial)
++    setDraft(userDraft(initial))
++    setChanges(new Map())
++    setFailure(undefined)
++  }, [initial])
++
++  const valueAt = (path: readonly string[]): unknown => hasPath(draft, path)
++    ? getPath(draft, path)
++    : getPath(namespace.value, path)
++  const setValue = (path: readonly string[], value: unknown): void => {
++    setDraft(current => setPath(current, path, value))
++    setChanges(current => new Map(current).set(pathKey(path), { op: 'set', path: [...path], value }))
++  }
++  const resetValue = (path: readonly string[]): void => {
++    setDraft(current => deletePath(current, path))
++    setChanges(current => new Map(current).set(pathKey(path), { op: 'unset', path: [...path] }))
++  }
++  const save = async (): Promise<void> => {
++    if (changes.size === 0 || busy) return
++    setBusy(true)
++    setFailure(undefined)
++    try {
++      const next = await mutateConfiguration(namespace.ns, [...changes.values()], namespace.revision)
++      setNamespace(next)
++      setDraft(userDraft(next))
++      setChanges(new Map())
++    } catch (error: unknown) {
++      setFailure(isSettingsConflict(error) ? 'conflict' : 'rejected')
++    } finally {
++      setBusy(false)
++    }
++  }
++
++  const renderField = (node: SchemaNode, path: readonly string[]): ReactNode => {
++    if (node.meta.hidden === true) return null
++    const label = path.join(' / ')
++    if (node.meta.role === 'secret') {
++      const slot = namespace.secrets.find(secret => samePath(secret.path, path))
++      return (
++        <label className={css.configField} key={pathKey(path)}>
++          <span>{label}</span>
++          <input
++            className={css.configInput}
++            type="password"
++            autoComplete="off"
++            value={typeof getPath(draft, path) === 'string' ? getPath(draft, path) as string : ''}
++            aria-label={label}
++            placeholder={slot?.set === true ? t('secretConfigured') : t('secretPlaceholder')}
++            disabled={disabled}
++            onChange={(event) => {
++              const value = event.currentTarget.value
++              if (value.length > 0) setValue(path, value)
++            }}
++          />
++          {slot?.set === true ? (
++            <Button type="button" variant="toolbar" size="sm" disabled={disabled} onClick={() => { resetValue(path) }}>
++              {t('clearSecret')}
++            </Button>
++          ) : null}
++        </label>
++      )
++    }
++    if (node.type === 'object') {
++      const children = Object.entries(node.dict ?? {})
++        .map(([key, child]) => renderField(child, [...path, key]))
++        .filter((child): child is ReactNode => child !== null)
++      if (children.length === 0) return null
++      if (path.length === 0) return <div className={css.configFields} key="root">{children}</div>
++      return (
++        <fieldset className={css.configGroup} key={pathKey(path)}>
++          <legend>{label}</legend>
++          <div className={css.configFields}>{children}</div>
++        </fieldset>
++      )
++    }
++    if (node.type === 'transform' || node.type === 'lazy') {
++      return node.inner === undefined
++        ? unsupportedField(label, path, t)
++        : renderField(node.inner, path)
++    }
++    const value = valueAt(path)
++    if (node.type === 'boolean') {
++      return (
++        <label className={css.configCheckbox} key={pathKey(path)}>
++          <input
++            type="checkbox"
++            checked={value === true}
++            aria-label={label}
++            disabled={disabled}
++            onChange={(event) => { setValue(path, event.currentTarget.checked) }}
++          />
++          <span>{label}</span>
++        </label>
++      )
++    }
++    if (node.type === 'number') {
++      return (
++        <label className={css.configField} key={pathKey(path)}>
++          <span>{label}</span>
++          <input
++            className={css.configInput}
++            type="number"
++            value={typeof value === 'number' ? String(value) : ''}
++            aria-label={label}
++            disabled={disabled}
++            onChange={(event) => {
++              const text = event.currentTarget.value
++              if (text === '') resetValue(path)
++              else setValue(path, Number(text))
++            }}
++          />
++        </label>
++      )
++    }
++    if (node.type === 'string') {
++      return (
++        <label className={css.configField} key={pathKey(path)}>
++          <span>{label}</span>
++          <input
++            className={css.configInput}
++            type="text"
++            value={typeof value === 'string' ? value : ''}
++            aria-label={label}
++            disabled={disabled}
++            onChange={(event) => { setValue(path, event.currentTarget.value) }}
++          />
++        </label>
++      )
++    }
++    const choices = constantChoices(node)
++    if (choices !== undefined) {
++      const selected = choices.findIndex(choice => Object.is(choice, value))
++      return (
++        <label className={css.configField} key={pathKey(path)}>
++          <span>{label}</span>
++          <select
++            className={css.configInput}
++            value={selected < 0 ? '' : String(selected)}
++            aria-label={label}
++            disabled={disabled}
++            onChange={(event) => { setValue(path, choices[Number(event.currentTarget.value)]!) }}
++          >
++            {selected < 0 ? <option value="" disabled>{t('selectValue')}</option> : null}
++            {choices.map((choice, index) => <option key={String(choice)} value={String(index)}>{String(choice)}</option>)}
++          </select>
++        </label>
++      )
++    }
++    if ((node.type === 'array' || node.type === 'tuple' || node.type === 'dict') && !hasSecretBelow(namespace, path)) {
++      return <JsonField key={pathKey(path)} label={label} value={value} disabled={disabled} onChange={(next) => { setValue(path, next) }} t={t} />
++    }
++    return unsupportedField(label, path, t)
++  }
++
++  return (
++    <section className={css.configForm} aria-label={`${t('pluginConfiguration')} ${namespace.ns}`}>
++      <div className={css.configHeading}>
++        <code>{namespace.ns}</code>
++        {namespace.applies === 'restart' ? <span>{t('restartRequired')}</span> : null}
++      </div>
++      {renderField(schema, [])}
++      {failure === undefined ? null : (
++        <div className={css.configFailure} role="alert">
++          <p>{t(failure === 'conflict' ? 'configurationConflict' : 'configurationSaveFailed')}</p>
++          {failure === 'conflict' ? (
++            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onRefresh}>
++              {t('refreshConfiguration')}
++            </Button>
++          ) : null}
++        </div>
++      )}
++      <div className={css.configActions}>
++        <Button type="button" variant="outline" disabled={disabled || changes.size === 0} onClick={() => { void save() }}>
++          {busy ? t('savingConfiguration') : t('saveConfiguration')}
++        </Button>
++      </div>
++    </section>
++  )
++}
++
++/** Render the owner-approved plugin configuration section. */
++export function PluginConfigurationSection({
++  listConfiguration,
++  mutateConfiguration,
++  t,
++}: PluginConfigurationSectionProps): ReactNode {
++  const headingId = useId()
++  const [request, setRequest] = useState(0)
++  const [state, setState] = useState<ConfigurationState>({ status: 'loading' })
++
++  const refresh = (): void => {
++    setState({ status: 'loading' })
++    setRequest(value => value + 1)
++  }
++
++  useEffect(() => {
++    let current = true
++    void Promise.resolve().then(() => listConfiguration()).then(
++      (snapshot) => { if (current) setState({ status: 'ready', snapshot }) },
++      () => { if (current) setState({ status: 'error' }) },
++    )
++    return () => { current = false }
++  }, [listConfiguration, request])
++
++  return (
++    <section className={css.configuration} aria-labelledby={headingId} aria-busy={state.status === 'loading'}>
++      <div className={css.catalogHeading}>
++        <h3 id={headingId}>{t('pluginConfiguration')}</h3>
++      </div>
++      {state.status === 'loading' ? <p className={css.status}>{t('loadingConfiguration')}</p> : null}
++      {state.status === 'error' ? (
++        <div className={css.failure}>
++          <p role="alert">{t('configurationError')}</p>
++          <button type="button" onClick={refresh}>{t('retry')}</button>
++        </div>
++      ) : null}
++      {state.status === 'ready' && state.snapshot.namespaces.length === 0
++        ? <p className={css.status}>{t('noPluginConfiguration')}</p>
++        : null}
++      {state.status === 'ready' ? state.snapshot.namespaces.map(namespace => (
++        <PluginConfigurationForm
++          key={namespace.ns}
++          initial={namespace}
++          writable={state.snapshot.writable}
++          mutateConfiguration={mutateConfiguration}
++          onRefresh={refresh}
++          t={t}
++        />
++      )) : null}
++    </section>
++  )
++}
++
++/** Return a clone of the redacted raw user layer for form-local edits. */
++function userDraft(namespace: SettingsNamespaceView): Record<string, unknown> {
++  return typeof namespace.user === 'object' && namespace.user !== null && !Array.isArray(namespace.user)
++    ? structuredClone(namespace.user) as Record<string, unknown>
++    : {}
++}
++
++/** Stable map key for a settings path. */
++function pathKey(path: readonly string[]): string {
++  return JSON.stringify(path)
++}
++
++/** Compare two settings paths without assigning special semantics to key text. */
++function samePath(left: readonly string[], right: readonly string[]): boolean {
++  return left.length === right.length && left.every((part, index) => part === right[index])
++}
++
++/** Whether a failed Remote write was refused because the edited revision is stale. */
++function isSettingsConflict(error: unknown): boolean {
++  return typeof error === 'object'
++    && error !== null
++    && 'code' in error
++    && (error as { readonly code?: unknown }).code === 'settings-conflict'
++}
++
++/** Whether a structural field encloses a write-only descendant that JSON editing cannot preserve. */
++function hasSecretBelow(namespace: SettingsNamespaceView, path: readonly string[]): boolean {
++  return namespace.secrets.some(secret => path.every((part, index) => part === secret.path[index]))
++}
++
++/** Extract a scalar union's choices, leaving all other unions to their owner configuration file. */
++function constantChoices(node: SchemaNode): readonly (string | number | boolean)[] | undefined {
++  if (node.type !== 'union' || node.list === undefined) return undefined
++  const choices = node.list.map(entry => entry.type === 'const' ? entry.value : undefined)
++  return choices.every(value => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
++    ? choices as Array<string | number | boolean>
++    : undefined
++}
++
++/** Explain an intentionally unsupported field instead of exposing a lossy editor. */
++function unsupportedField(
++  label: string,
++  path: readonly string[],
++  t: PluginConfigurationSectionProps['t'],
++): ReactNode {
++  return <p className={css.configUnsupported} key={pathKey(path)}>{`${label}: ${t('unsupportedConfiguration')}`}</p>
++}
+diff --git a/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.module.css b/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.module.css
+index de10a3b..3d064ce 100644
+--- a/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.module.css
++++ b/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.module.css
+@@ -43,6 +43,270 @@
+   gap: 12px;
+ }
+ 
++.installForm {
++  display: flex;
++  align-items: end;
++  gap: 8px;
++}
++
++.sourceField {
++  display: flex;
++  min-width: 0;
++  flex: 1;
++  flex-direction: column;
++  gap: 5px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++  line-height: 18px;
++}
++
++.sourceField input {
++  box-sizing: border-box;
++  width: 100%;
++  height: 36px;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 8px;
++  padding: 0 10px;
++  outline: none;
++  background: var(--dsw-alias-bg-layer-1);
++  color: var(--dsw-alias-label-primary);
++  font: inherit;
++  font-size: 13px;
++}
++
++.sourceField input::placeholder {
++  color: var(--dsw-alias-label-tertiary);
++}
++
++.sourceField input:focus-visible {
++  border-color: var(--dsw-alias-state-business-primary);
++  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent);
++}
++
++.operationResult {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 4px 8px;
++  margin: 0;
++  font-size: 12px;
++  line-height: 18px;
++  color: var(--dsw-alias-state-success-primary);
++}
++
++.operationResult[data-result='failure'] {
++  color: var(--dsw-alias-state-error-primary);
++}
++
++.configuration {
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++  border-top: 1px solid var(--dsw-alias-border-l2);
++  padding-top: 14px;
++}
++
++.configForm {
++  display: flex;
++  flex-direction: column;
++  gap: 12px;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 6px;
++  padding: 12px;
++}
++
++.configHeading,
++.configActions {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++}
++
++.configHeading {
++  justify-content: space-between;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++  line-height: 18px;
++}
++
++.configHeading code {
++  color: var(--dsw-alias-label-primary);
++}
++
++.configFields {
++  display: grid;
++  gap: 10px;
++}
++
++.configField,
++.configCheckbox {
++  display: flex;
++  flex-direction: column;
++  gap: 5px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++  line-height: 18px;
++}
++
++.configCheckbox {
++  flex-direction: row;
++  align-items: center;
++  color: var(--dsw-alias-label-primary);
++}
++
++.configInput,
++.configTextarea {
++  box-sizing: border-box;
++  width: 100%;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 6px;
++  padding: 7px 9px;
++  outline: none;
++  background: var(--dsw-alias-bg-layer-1);
++  color: var(--dsw-alias-label-primary);
++  font: inherit;
++  font-size: 13px;
++  line-height: 20px;
++}
++
++.configInput {
++  height: 36px;
++}
++
++.configTextarea {
++  min-height: 92px;
++  resize: vertical;
++}
++
++.configInput:focus-visible,
++.configTextarea:focus-visible {
++  border-color: var(--dsw-alias-state-business-primary);
++  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent);
++}
++
++.configGroup {
++  min-width: 0;
++  margin: 0;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 6px;
++  padding: 8px;
++}
++
++.configGroup legend {
++  padding: 0 4px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++}
++
++.configFieldError,
++.configUnsupported {
++  margin: 0;
++  color: var(--dsw-alias-state-error-primary);
++  font-size: 12px;
++  line-height: 18px;
++}
++
++.configFailure {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 6px 8px;
++  margin: 0;
++  color: var(--dsw-alias-state-error-primary);
++  font-size: 12px;
++  line-height: 18px;
++}
++
++.configFailure p {
++  margin: 0;
++}
++
++.configUnsupported {
++  color: var(--dsw-alias-label-tertiary);
++}
++
++.packages {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.packageRows {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  margin: 0;
++  padding: 0;
++  list-style: none;
++}
++
++.packageRow {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  min-width: 0;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 8px;
++  padding: 10px 12px;
++  background: var(--dsw-alias-bg-layer-3);
++}
++
++.packageIdentity {
++  display: flex;
++  min-width: 0;
++  flex: 1;
++  flex-direction: column;
++  gap: 3px;
++}
++
++.packageName {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  min-width: 0;
++}
++
++.packageName strong {
++  overflow: hidden;
++  font-size: 13px;
++  line-height: 18px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.packageTag {
++  flex: none;
++  border-radius: 4px;
++  padding: 1px 5px;
++  background: var(--dsw-alias-bg-module-platform);
++  color: var(--dsw-alias-label-secondary);
++  font-size: 11px;
++  line-height: 16px;
++}
++
++.packageIdentity code {
++  overflow: hidden;
++  color: var(--dsw-alias-label-tertiary);
++  font-family: var(--ds-font-family-code);
++  font-size: 11px;
++  line-height: 16px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.packageActions,
++.entryActions {
++  display: inline-flex;
++  flex: none;
++  align-items: center;
++  gap: 4px;
++}
++
++.iconButton {
++  width: 28px;
++  padding: 0;
++  border-radius: 6px;
++}
++
+ .search {
+   position: relative;
+   display: flex;
+@@ -256,6 +520,10 @@
+   line-height: 17px;
+ }
+ 
++.entryActions {
++  margin-top: 10px;
++}
++
+ .visuallyHidden {
+   position: absolute;
+   width: 1px;
+@@ -273,6 +541,15 @@
+ }
+ 
+ @media (max-width: 680px) {
++  .installForm {
++    align-items: stretch;
++    flex-direction: column;
++  }
++
++  .installForm > button {
++    align-self: flex-end;
++  }
++
+   .cards {
+     grid-template-columns: minmax(0, 1fr);
+   }
+diff --git a/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx b/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx
+index 12fd3d2..4000756 100644
+--- a/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx
++++ b/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.tsx
+@@ -1,21 +1,48 @@
+-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+-import type { PluginInventorySnapshot } from '@deepseek-ai/dsh-api-remotes/client'
++import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
++import type {
++  PluginInventorySnapshot,
++  PluginManagementReceipt,
++  PluginManagementRequest,
++} from '@deepseek-ai/dsh-api-remotes/client'
+ import {
++  Button,
+   IconChevronDownOutline14,
++  IconPauseOutline16,
++  IconPlayOutline16,
++  IconPlusOutline16,
++  IconRefreshOutline16,
+   IconSearchOutline16,
++  IconTrashOutline16,
++  Modal,
++  Tooltip,
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { PluginInventoryLocaleKey } from './locales.ts'
++import { PluginConfigurationSection, type PluginConfigurationInjected } from './PluginConfigurationSection.tsx'
+ import css from './PluginInventorySettingsTab.module.css'
+ 
+ /** Registration-side Remote face used by the section. */
+-export interface PluginInventorySettingsTabInjected {
++export interface PluginInventorySettingsTabInjected extends PluginConfigurationInjected {
+   /** Read a current Host inventory snapshot. */
+   list: () => Promise<PluginInventorySnapshot>
++  /** Persist one user-confirmed profile mutation through the Host. */
++  manage: (request: PluginManagementRequest) => Promise<PluginManagementReceipt>
+ }
+ 
+ type PluginInventoryEntry = PluginInventorySnapshot['entries'][number]
+ type PluginFiberPhase = PluginInventoryEntry['fiberPhase']
++type PluginProfilePackage = PluginInventorySnapshot['packages'][number]
++type ManagementRequest = Parameters<PluginInventorySettingsTabInjected['manage']>[0]
++
++type Confirmation =
++  | {
++    readonly request: Extract<ManagementRequest, { readonly kind: 'uninstall' }>
++    readonly plugin: string
++  }
++  | {
++    readonly request: Extract<ManagementRequest, { readonly kind: 'set-enabled' }>
++    readonly plugin: string
++  }
+ 
+ /** Full component props assembled by the Settings slot renderer. */
+ export type PluginInventorySettingsTabProps =
+@@ -60,13 +87,41 @@ function matches(entry: PluginInventoryEntry, normalizedQuery: string): boolean
+     .some(value => value.toLocaleLowerCase().includes(normalizedQuery))
+ }
+ 
+-/** Render the read-only current Loader inventory. */
+-export function PluginInventorySettingsTab({ list, t }: PluginInventorySettingsTabProps): ReactNode {
++/** Insert one user-facing plugin name into localized confirmation copy. */
++function pluginCopy(template: string, plugin: string): string {
++  return template.replace('{plugin}', plugin)
++}
++
++/** Visual copy for the currently serialized Host operation. */
++function pendingLabel(
++  pending: ManagementRequest['kind'] | null,
++  t: PluginInventorySettingsTabProps['t'],
++): string | undefined {
++  if (pending === 'install') return t('installing')
++  if (pending === 'update') return t('updating')
++  if (pending === 'uninstall') return t('uninstalling')
++  return pending === 'set-enabled' ? undefined : undefined
++}
++
++/** Render the current Loader inventory and profile-scoped management controls. */
++export function PluginInventorySettingsTab({
++  list, manage, listConfiguration, mutateConfiguration, t,
++}: PluginInventorySettingsTabProps): ReactNode {
+   const catalogId = useId()
+   const [request, setRequest] = useState(0)
+   const [query, setQuery] = useState('')
+   const [expanded, setExpanded] = useState<PluginInventoryEntry['entryId'] | null>(null)
+   const [state, setState] = useState<ViewState>({ status: 'loading' })
++  const [source, setSource] = useState('')
++  const [pending, setPending] = useState<ManagementRequest['kind'] | null>(null)
++  const [receipt, setReceipt] = useState<PluginManagementReceipt | null>(null)
++  const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
++  const mounted = useRef(true)
++
++  useEffect(() => {
++    mounted.current = true
++    return () => { mounted.current = false }
++  }, [])
+ 
+   useEffect(() => {
+     let current = true
+@@ -96,8 +151,83 @@ export function PluginInventorySettingsTab({ list, t }: PluginInventorySettingsT
+     setRequest(value => value + 1)
+   }
+ 
++  const run = (operation: ManagementRequest): void => {
++    if (pending !== null) return
++    setPending(operation.kind)
++    setReceipt(null)
++    void manage(operation).then(
++      (nextReceipt) => {
++        if (!mounted.current) return
++        setReceipt(nextReceipt)
++        if (!nextReceipt.ok) return
++        if (operation.kind === 'install') setSource('')
++        retry()
++      },
++      () => {
++        if (!mounted.current) return
++        setReceipt({
++          kind: operation.kind,
++          ok: false,
++          message: t('operationFailed'),
++          restartRequired: false,
++        })
++      },
++    ).finally(() => {
++      if (mounted.current) setPending(null)
++    })
++  }
++
++  const confirm = (): void => {
++    if (confirmation === null) return
++    const operation = confirmation.request
++    setConfirmation(null)
++    run(operation)
++  }
++
++  const hasSource = source.trim().length > 0
++  const busyLabel = pendingLabel(pending, t)
++  const packages = state.status === 'ready' ? state.snapshot.packages ?? [] : []
++
+   return (
+     <div className={css.section} aria-busy={state.status === 'loading'}>
++      <form
++        className={css.installForm}
++        onSubmit={(event) => {
++          event.preventDefault()
++          const nextSource = source.trim()
++          if (nextSource !== '' && pending === null) run({ kind: 'install', source: nextSource })
++        }}
++      >
++        <label className={css.sourceField}>
++          <span>{t('installSource')}</span>
++          <input
++            value={source}
++            disabled={pending !== null}
++            placeholder={t('installSourcePlaceholder')}
++            aria-label={t('installSource')}
++            spellCheck={false}
++            onChange={(event) => { setSource(event.currentTarget.value) }}
++          />
++        </label>
++        <Button
++          type="submit"
++          variant="primary"
++          icon={<IconPlusOutline16 aria-hidden="true" />}
++          disabled={!hasSource || pending !== null}
++        >
++          {pending === 'install' ? t('installing') : t('install')}
++        </Button>
++      </form>
++      {receipt === null ? null : (
++        <div
++          className={css.operationResult}
++          data-result={receipt.ok ? 'success' : 'failure'}
++          role={receipt.ok ? 'status' : 'alert'}
++        >
++          <span>{receipt.message}</span>
++          {receipt.restartRequired ? <span>{t('restartRequired')}</span> : null}
++        </div>
++      )}
+       {state.status === 'loading' ? <p className={css.status}>{t('loading')}</p> : null}
+       {state.status === 'error' ? (
+         <div className={css.failure}>
+@@ -107,6 +237,65 @@ export function PluginInventorySettingsTab({ list, t }: PluginInventorySettingsT
+       ) : null}
+       {state.status === 'ready' ? (
+         <div className={css.catalog}>
++          <section className={css.packages} aria-labelledby={`${catalogId}-packages`}>
++            <div className={css.catalogHeading}>
++              <h3 id={`${catalogId}-packages`}>{t('installedPackages')}</h3>
++              <span>{packages.length}</span>
++            </div>
++            {packages.length === 0 ? <p className={css.status}>{t('noInstalledPackages')}</p> : null}
++            {packages.length > 0 ? (
++              <ul className={css.packageRows}>
++                {packages.map((pluginPackage: PluginProfilePackage) => (
++                  <li className={css.packageRow} key={pluginPackage.packageName} data-package={pluginPackage.packageName}>
++                    <div className={css.packageIdentity}>
++                      <div className={css.packageName}>
++                        <strong>{pluginPackage.packageName}</strong>
++                        <span className={css.packageTag}>
++                          {pluginPackage.isBuiltin
++                            ? t('builtInPackage')
++                            : pluginPackage.isBundle ? t('bundlePackage') : t('libraryPackage')}
++                        </span>
++                      </div>
++                      <code>{pluginPackage.source}</code>
++                    </div>
++                    {pluginPackage.isBuiltin ? null : <div className={css.packageActions}>
++                      <Tooltip label={`${t('update')} ${pluginPackage.packageName}`} side="bottom" delayMs={400}>
++                        <span>
++                          <Button
++                            variant="toolbar"
++                            size="sm"
++                            className={css.iconButton}
++                            aria-label={`${t('update')} ${pluginPackage.packageName}`}
++                            disabled={pending !== null}
++                            icon={<IconRefreshOutline16 size={14} aria-hidden="true" />}
++                            onClick={() => { run({ kind: 'update', packageName: pluginPackage.packageName }) }}
++                          />
++                        </span>
++                      </Tooltip>
++                      <Tooltip label={`${t('uninstall')} ${pluginPackage.packageName}`} side="bottom" delayMs={400}>
++                        <span>
++                          <Button
++                            variant="toolbar"
++                            size="sm"
++                            className={css.iconButton}
++                            aria-label={`${t('uninstall')} ${pluginPackage.packageName}`}
++                            disabled={pending !== null}
++                            icon={<IconTrashOutline16 size={14} aria-hidden="true" />}
++                            onClick={() => {
++                              setConfirmation({
++                                request: { kind: 'uninstall', packageName: pluginPackage.packageName },
++                                plugin: pluginPackage.packageName,
++                              })
++                            }}
++                          />
++                        </span>
++                      </Tooltip>
++                    </div>}
++                  </li>
++                ))}
++              </ul>
++            ) : null}
++          </section>
+           <label className={css.search}>
+             <IconSearchOutline16 aria-hidden="true" />
+             <span className={css.visuallyHidden}>{t('search')}</span>
+@@ -183,6 +372,36 @@ export function PluginInventorySettingsTab({ list, t }: PluginInventorySettingsT
+                             </div>
+                           ) : null}
+                         </dl>
++                        <div className={css.entryActions}>
++                          <Tooltip
++                            label={`${entry.enabled ? t('disable') : t('enable')} ${title}`}
++                            side="bottom"
++                            delayMs={400}
++                          >
++                            <span>
++                              <Button
++                                variant="toolbar"
++                                size="sm"
++                                className={css.iconButton}
++                                aria-label={`${entry.enabled ? t('disable') : t('enable')} ${title}`}
++                                disabled={pending !== null}
++                                icon={entry.enabled
++                                  ? <IconPauseOutline16 size={14} aria-hidden="true" />
++                                  : <IconPlayOutline16 size={14} aria-hidden="true" />}
++                                onClick={() => {
++                                  if (entry.enabled) {
++                                    setConfirmation({
++                                      request: { kind: 'set-enabled', entryId: entry.entryId, enabled: false },
++                                      plugin: title,
++                                    })
++                                    return
++                                  }
++                                  run({ kind: 'set-enabled', entryId: entry.entryId, enabled: true })
++                                }}
++                              />
++                            </span>
++                          </Tooltip>
++                        </div>
+                       </div>
+                     ) : null}
+                   </li>
+@@ -192,6 +411,32 @@ export function PluginInventorySettingsTab({ list, t }: PluginInventorySettingsT
+           ) : null}
+         </div>
+       ) : null}
++      <PluginConfigurationSection
++        listConfiguration={listConfiguration}
++        mutateConfiguration={mutateConfiguration}
++        t={t}
++      />
++      <Modal
++        open={confirmation !== null}
++        onClose={() => { if (pending === null) setConfirmation(null) }}
++        title={confirmation?.request.kind === 'uninstall' ? t('uninstallTitle') : t('disableTitle')}
++        closeLabel={t('close')}
++        description={confirmation === null
++          ? ''
++          : confirmation.request.kind === 'uninstall'
++            ? pluginCopy(t('uninstallDescription'), confirmation.plugin)
++            : pluginCopy(t('disableDescription'), confirmation.plugin)}
++        footer={(
++          <>
++            <Button variant="outline" autoFocus disabled={pending !== null} onClick={() => { setConfirmation(null) }}>
++              {t('cancel')}
++            </Button>
++            <Button variant="primary" disabled={pending !== null} onClick={confirm}>
++              {busyLabel ?? t('confirm')}
++            </Button>
++          </>
++        )}
++      />
+     </div>
+   )
+ }
+diff --git a/packages/client/ui-settings-plugin-inventory/src/client/index.ts b/packages/client/ui-settings-plugin-inventory/src/client/index.ts
+index ccfd8bd..80084a9 100644
+--- a/packages/client/ui-settings-plugin-inventory/src/client/index.ts
++++ b/packages/client/ui-settings-plugin-inventory/src/client/index.ts
+@@ -1,9 +1,14 @@
+ /** Read-only Host plugin inventory registered into Web Settings. */
+ 
+ import type {} from '@deepseek-ai/dsh-client-locale/client'
++import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+-import { PluginInventorySettingsTab, type PluginInventorySettingsTabInjected } from './PluginInventorySettingsTab.tsx'
++import {
++  PluginInventorySettingsTab,
++  type PluginInventorySettingsTabInjected,
++} from './PluginInventorySettingsTab.tsx'
++import type { PluginConfigurationInjected } from './PluginConfigurationSection.tsx'
+ import { en, zh, type PluginInventoryLocaleKey } from './locales.ts'
+ 
+ export type { PluginInventorySettingsTabInjected, PluginInventorySettingsTabProps } from './PluginInventorySettingsTab.tsx'
+@@ -20,13 +25,19 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+ export const NS = 'settings.pluginInventory'
+ 
+ /** Services required by the Settings registration and generated Remote face. */
+-export const inject = ['slots', 'locale', 'remote', 'remote.pluginInventory']
++export const inject = ['slots', 'locale', 'remote', 'remote.pluginInventory', 'connection']
++
++/** Preserve the typed Remote failure code for the settings form's recovery path. */
++function settingsMutationFailure(error: { readonly code: string; readonly message: string }): Error & { readonly code: string } {
++  return Object.assign(new Error(`settings.mutate failed: ${error.code}: ${error.message}`), { code: error.code })
++}
+ 
+ /** Contribute the lazy inventory tab to the Plugins settings section. */
+ export function apply(ctx: ClientContext): void {
+   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-plugin-inventory: dictionaries')
+ 
+   const t = ctx.locale.bind(NS)
++  const connection = ctx.get('connection') as ConnectionHandle
+   const list: PluginInventorySettingsTabInjected['list'] = async () => {
+     const result = await ctx.remote.pluginInventory.list()
+     if (!result.ok) {
+@@ -34,7 +45,33 @@ export function apply(ctx: ClientContext): void {
+     }
+     return result.value
+   }
+-  const injected = (): PluginInventorySettingsTabInjected => ({ list })
++  const manage: PluginInventorySettingsTabInjected['manage'] = async (request) => {
++    const result = await ctx.remote.pluginInventory.manage(request)
++    if (!result.ok) {
++      throw new Error(`pluginInventory.manage failed: ${result.error.code}: ${result.error.message}`)
++    }
++    return result.value
++  }
++  const listConfiguration: PluginConfigurationInjected['listConfiguration'] = async () => {
++    const result = await connection.api.settings.describe({})
++    if (!result.result.ok) {
++      throw new Error(`settings.describe failed: ${result.result.error.code}: ${result.result.error.message}`)
++    }
++    return {
++      writable: result.result.value.writable,
++      namespaces: result.result.value.namespaces.filter(namespace => namespace.exposeToWeb === 'form'),
++    }
++  }
++  const mutateConfiguration: PluginConfigurationInjected['mutateConfiguration'] = async (ns, ops, expectedRevision) => {
++    const result = await connection.api.settings.mutate({ ns, ops: [...ops], expectedRevision })
++    if (!result.result.ok) {
++      throw settingsMutationFailure(result.result.error)
++    }
++    return result.result.value
++  }
++  const injected = (): PluginInventorySettingsTabInjected => ({
++    list, manage, listConfiguration, mutateConfiguration,
++  })
+ 
+   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
+     name: 'settings.plugins.tab',
+diff --git a/packages/client/ui-settings-plugin-inventory/src/client/locales.ts b/packages/client/ui-settings-plugin-inventory/src/client/locales.ts
+index 8669370..96830c8 100644
+--- a/packages/client/ui-settings-plugin-inventory/src/client/locales.ts
++++ b/packages/client/ui-settings-plugin-inventory/src/client/locales.ts
+@@ -6,6 +6,33 @@ export const zh = {
+   loading: '正在读取插件…',
+   error: '暂时无法读取插件。',
+   retry: '重试',
++  installTitle: '安装插件',
++  installSource: '插件来源',
++  installSourcePlaceholder: '包名、Git 地址或本地路径',
++  install: '安装',
++  installing: '正在安装…',
++  installedPackages: '已安装包',
++  noInstalledPackages: '尚未安装额外插件包。',
++  builtInPackage: '内置组合包',
++  bundlePackage: '组合包',
++  libraryPackage: '依赖包',
++  update: '更新',
++  updating: '正在更新…',
++  uninstall: '卸载',
++  uninstalling: '正在卸载…',
++  enable: '启用',
++  disable: '停用',
++  enabling: '正在启用…',
++  disabling: '正在停用…',
++  operationFailed: '插件操作暂时失败，请重试。',
++  restartRequired: '重启 Harness 后生效。',
++  close: '关闭',
++  cancel: '取消',
++  confirm: '确认',
++  uninstallTitle: '卸载插件',
++  uninstallDescription: '确定要卸载“{plugin}”吗？该操作会在重启 Harness 后生效。',
++  disableTitle: '停用插件',
++  disableDescription: '确定要停用“{plugin}”吗？该操作会在重启 Harness 后生效。',
+   search: '搜索插件',
+   catalog: '插件列表',
+   empty: '暂无插件。',
+@@ -13,6 +40,21 @@ export const zh = {
+   enabledTag: '已启用',
+   disabledTag: '已停用',
+   configuration: '配置状态',
++  pluginConfiguration: '插件配置',
++  loadingConfiguration: '正在读取插件配置…',
++  configurationError: '暂时无法读取插件配置。',
++  noPluginConfiguration: '已安装插件尚未声明可在此编辑的配置。',
++  saveConfiguration: '保存配置',
++  savingConfiguration: '正在保存…',
++  configurationSaveFailed: '保存插件配置失败，请刷新后重试。',
++  configurationConflict: '配置已在其他位置变更，请刷新后重新保存。',
++  refreshConfiguration: '刷新配置',
++  secretConfigured: '已配置，输入新值即可替换',
++  secretPlaceholder: '输入密钥',
++  clearSecret: '清除密钥',
++  invalidJson: '请输入有效的 JSON。',
++  selectValue: '请选择',
++  unsupportedConfiguration: '此字段需在配置文件中编辑。',
+   cordis: 'Cordis 状态',
+   unobserved: '未挂载',
+   pending: '等待依赖',
+@@ -31,6 +73,33 @@ export const en = {
+   loading: 'Reading plugins…',
+   error: 'Plugins are temporarily unavailable.',
+   retry: 'Retry',
++  installTitle: 'Install plugin',
++  installSource: 'Plugin source',
++  installSourcePlaceholder: 'Package name, Git URL, or local path',
++  install: 'Install',
++  installing: 'Installing…',
++  installedPackages: 'Installed packages',
++  noInstalledPackages: 'No additional plugin packages are installed.',
++  builtInPackage: 'Built-in bundle',
++  bundlePackage: 'Bundle',
++  libraryPackage: 'Dependency',
++  update: 'Update',
++  updating: 'Updating…',
++  uninstall: 'Uninstall',
++  uninstalling: 'Uninstalling…',
++  enable: 'Enable',
++  disable: 'Disable',
++  enabling: 'Enabling…',
++  disabling: 'Disabling…',
++  operationFailed: 'The plugin operation could not be completed. Try again.',
++  restartRequired: 'Takes effect after Harness restarts.',
++  close: 'Close',
++  cancel: 'Cancel',
++  confirm: 'Confirm',
++  uninstallTitle: 'Uninstall plugin',
++  uninstallDescription: 'Uninstall “{plugin}”? This takes effect after Harness restarts.',
++  disableTitle: 'Disable plugin',
++  disableDescription: 'Disable “{plugin}”? This takes effect after Harness restarts.',
+   search: 'Search plugins',
+   catalog: 'Plugin list',
+   empty: 'No plugins are available.',
+@@ -38,6 +107,21 @@ export const en = {
+   enabledTag: 'Enabled',
+   disabledTag: 'Disabled',
+   configuration: 'Configuration',
++  pluginConfiguration: 'Plugin configuration',
++  loadingConfiguration: 'Reading plugin configuration…',
++  configurationError: 'Plugin configuration is temporarily unavailable.',
++  noPluginConfiguration: 'Installed plugins have not declared editable configuration.',
++  saveConfiguration: 'Save configuration',
++  savingConfiguration: 'Saving…',
++  configurationSaveFailed: 'Plugin configuration could not be saved. Refresh and try again.',
++  configurationConflict: 'Configuration changed elsewhere. Refresh and save again.',
++  refreshConfiguration: 'Refresh configuration',
++  secretConfigured: 'Configured; enter a replacement value',
++  secretPlaceholder: 'Enter secret',
++  clearSecret: 'Clear secret',
++  invalidJson: 'Enter valid JSON.',
++  selectValue: 'Select a value',
++  unsupportedConfiguration: 'Edit this field in the configuration file.',
+   cordis: 'Cordis status',
+   unobserved: 'Not mounted',
+   pending: 'Waiting for dependencies',
+diff --git a/packages/client/ui-settings-plugin-inventory/tests/browser-plugin.client.spec.tsx b/packages/client/ui-settings-plugin-inventory/tests/browser-plugin.client.spec.tsx
+index b955db8..aef1f32 100644
+--- a/packages/client/ui-settings-plugin-inventory/tests/browser-plugin.client.spec.tsx
++++ b/packages/client/ui-settings-plugin-inventory/tests/browser-plugin.client.spec.tsx
+@@ -17,6 +17,12 @@ const EMPTY = { entries: [] }
+ type ListResult =
+   | { readonly ok: true; readonly value: typeof EMPTY }
+   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
++type ManageResult =
++  | { readonly ok: true; readonly value: { readonly kind: 'install'; readonly ok: boolean; readonly message: string; readonly restartRequired: boolean } }
++  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
++type SettingsResult =
++  | { readonly result: { readonly ok: true; readonly value: { readonly writable: boolean; readonly hasDocument: boolean; readonly namespaces: readonly [] } } }
++  | { readonly result: { readonly ok: false; readonly error: { readonly code: string; readonly message: string } } }
+ 
+ async function bench() {
+   const ctx = new Context()
+@@ -31,8 +37,17 @@ async function bench() {
+   new RemoteService(ctx)
+   const list = vi.fn<() => Promise<ListResult>>()
+     .mockResolvedValue({ ok: true, value: EMPTY })
+-  ctx.provide('remote.pluginInventory', { list })
+-  return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, list }
++  const manage = vi.fn<() => Promise<ManageResult>>()
++    .mockResolvedValue({ ok: true, value: { kind: 'install', ok: true, message: '已安装', restartRequired: true } })
++  const describe = vi.fn<() => Promise<SettingsResult>>().mockResolvedValue({
++    result: { ok: true, value: { writable: true, hasDocument: false, namespaces: [] } },
++  })
++  const mutate = vi.fn<() => Promise<SettingsResult>>().mockResolvedValue({
++    result: { ok: true, value: { writable: true, hasDocument: false, namespaces: [] } },
++  })
++  ctx.provide('remote.pluginInventory', { list, manage })
++  ctx.provide('connection', { api: { settings: { describe, mutate } } } as never)
++  return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, list, manage, describe, mutate }
+ }
+ 
+ function declare(slots: SlotRegistry): () => void {
+@@ -44,7 +59,7 @@ function declare(slots: SlotRegistry): () => void {
+ 
+ describe('ui-settings-plugin-inventory browser plugin', () => {
+   it('declares only the services used by the Settings Remote contribution', () => {
+-    expect(inject).toEqual(['slots', 'locale', 'remote', 'remote.pluginInventory'])
++    expect(inject).toEqual(['slots', 'locale', 'remote', 'remote.pluginInventory', 'connection'])
+   })
+ 
+   it('registers a localized tab without reading the Remote eagerly', async () => {
+@@ -62,8 +77,17 @@ describe('ui-settings-plugin-inventory browser plugin', () => {
+     const injected = (entry.inject as unknown as () => PluginInventorySettingsTabInjected)()
+     await expect(injected.list()).resolves.toEqual(EMPTY)
+     expect(b.list).toHaveBeenCalledOnce()
++    await expect(injected.manage({ kind: 'install', source: '@fixture/plugin' })).resolves.toMatchObject({
++      kind: 'install', ok: true,
++    })
++    expect(b.manage).toHaveBeenCalledWith({ kind: 'install', source: '@fixture/plugin' })
++    await expect(injected.listConfiguration()).resolves.toEqual({ writable: true, namespaces: [] })
++    expect(b.describe).toHaveBeenCalledWith({})
+     b.list.mockResolvedValueOnce({ ok: false, error: { code: 'REMOTE_ERROR', message: 'unavailable' } })
+     await expect(injected.list()).rejects.toThrow('pluginInventory.list failed: REMOTE_ERROR: unavailable')
++    b.manage.mockResolvedValueOnce({ ok: false, error: { code: 'REMOTE_ERROR', message: 'unavailable' } })
++    await expect(injected.manage({ kind: 'install', source: '@fixture/plugin' }))
++      .rejects.toThrow('pluginInventory.manage failed: REMOTE_ERROR: unavailable')
+     await b.ctx.fiber.dispose()
+   })
+ 
+diff --git a/packages/client/ui-settings-plugin-inventory/tests/components.client.spec.tsx b/packages/client/ui-settings-plugin-inventory/tests/components.client.spec.tsx
+index bec1d64..7a4ce31 100644
+--- a/packages/client/ui-settings-plugin-inventory/tests/components.client.spec.tsx
++++ b/packages/client/ui-settings-plugin-inventory/tests/components.client.spec.tsx
+@@ -1,6 +1,7 @@
+ // @vitest-environment jsdom
+ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
++import Schema from '@deepseek-ai/schemastery'
+ import { PluginInventorySettingsTab } from '../src/client/PluginInventorySettingsTab.tsx'
+ import type {
+   PluginInventorySettingsTabInjected,
+@@ -11,12 +12,32 @@ import { en, type PluginInventoryLocaleKey } from '../src/client/locales.ts'
+ afterEach(cleanup)
+ 
+ type Snapshot = Awaited<ReturnType<PluginInventorySettingsTabInjected['list']>>
++type Manage = PluginInventorySettingsTabInjected['manage']
++type Configuration = Awaited<ReturnType<PluginInventorySettingsTabInjected['listConfiguration']>>
++type MutateConfiguration = PluginInventorySettingsTabInjected['mutateConfiguration']
+ const t = ((key: PluginInventoryLocaleKey): string => en[key]) as PluginInventorySettingsTabProps['t']
+ 
+-function props(list: PluginInventorySettingsTabInjected['list']): PluginInventorySettingsTabProps {
++const EMPTY_CONFIGURATION: Configuration = { writable: true, namespaces: [] }
++
++function props(
++  list: PluginInventorySettingsTabInjected['list'],
++  manage: Manage = async (request) => ({
++    kind: request.kind,
++    ok: true,
++    message: 'Saved',
++    restartRequired: true,
++  }),
++  listConfiguration: PluginInventorySettingsTabInjected['listConfiguration'] = async () => EMPTY_CONFIGURATION,
++  mutateConfiguration: MutateConfiguration = async () => {
++    throw new Error('not exercised')
++  },
++): PluginInventorySettingsTabProps {
+   return {
+     t,
+     list,
++    manage,
++    listConfiguration,
++    mutateConfiguration,
+   } as PluginInventorySettingsTabProps
+ }
+ 
+@@ -30,9 +51,122 @@ const SNAPSHOT = {
+     { entryId: 'unobserved', moduleName: '@fixture/unobserved-name', enabled: true, fiberPhase: null },
+     { entryId: 'disabled-entry', moduleName: '@deepseek-ai/dsh-host-directory-picker-native', enabled: false, fiberPhase: null },
+   ],
++  packages: [
++    { packageName: '@fixture/managed-plugin', source: '^1.0.0', isBundle: true, isBuiltin: false },
++  ],
+ } as unknown as Snapshot
+ 
++const WIRE = (schema: Schema): unknown => JSON.parse(JSON.stringify(schema.toJSON()))
++const CONFIGURATION: Configuration = {
++  writable: true,
++  namespaces: [{
++    ns: 'fixture-plugin',
++    schema: WIRE(Schema.object({
++      endpoint: Schema.string(),
++      retries: Schema.number(),
++      enabled: Schema.boolean(),
++      mode: Schema.union(['safe', 'fast'] as const),
++      metadata: Schema.dict(Schema.string()),
++      apiKey: Schema.string().role('secret'),
++    })),
++    value: { endpoint: 'https://old.example', retries: 2, enabled: true, mode: 'safe', metadata: { region: 'cn' } },
++    user: { endpoint: 'https://old.example' },
++    applies: 'restart',
++    secrets: [{ path: ['apiKey'], set: true }],
++    revision: 4,
++    exposeToWeb: 'form',
++  }],
++}
++
+ describe('PluginInventorySettingsTab', () => {
++  it('renders an owner-approved schema form and saves only changed paths', async () => {
++    const mutateConfiguration = vi.fn<MutateConfiguration>().mockResolvedValue(CONFIGURATION.namespaces[0]!)
++    render(<PluginInventorySettingsTab {...props(
++      async () => SNAPSHOT,
++      undefined,
++      async () => CONFIGURATION,
++      mutateConfiguration,
++    )} />)
++
++    const endpoint = await screen.findByRole('textbox', { name: 'endpoint' })
++    expect((endpoint as HTMLInputElement).value).toBe('https://old.example')
++    expect((screen.getByRole('checkbox', { name: 'enabled' }) as HTMLInputElement).checked).toBe(true)
++    expect((screen.getByRole('combobox', { name: 'mode' }) as HTMLSelectElement).value).toBe('0')
++    const secret = screen.getByLabelText('apiKey') as HTMLInputElement
++    expect(secret.type).toBe('password')
++    expect(secret.value).toBe('')
++    expect(screen.getByRole('button', { name: en.clearSecret })).toBeTruthy()
++
++    fireEvent.change(endpoint, { target: { value: 'https://new.example' } })
++    fireEvent.click(screen.getByRole('button', { name: en.saveConfiguration }))
++    await waitFor(() => {
++      expect(mutateConfiguration).toHaveBeenCalledWith(
++        'fixture-plugin',
++        [{ op: 'set', path: ['endpoint'], value: 'https://new.example' }],
++        4,
++      )
++    })
++  })
++
++  it('sends an explicit unset when clearing a configured secret', async () => {
++    const cleared = { ...CONFIGURATION.namespaces[0]!, secrets: [{ path: ['apiKey'], set: false }], revision: 5 }
++    const mutateConfiguration = vi.fn<MutateConfiguration>().mockResolvedValue(cleared)
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, undefined, async () => CONFIGURATION, mutateConfiguration)} />)
++
++    fireEvent.click(await screen.findByRole('button', { name: en.clearSecret }))
++    fireEvent.click(screen.getByRole('button', { name: en.saveConfiguration }))
++    await waitFor(() => {
++      expect(mutateConfiguration).toHaveBeenCalledWith(
++        'fixture-plugin',
++        [{ op: 'unset', path: ['apiKey'] }],
++        4,
++      )
++    })
++  })
++
++  it('blocks writes for a read-only settings provider', async () => {
++    const listConfiguration = async (): Promise<Configuration> => ({ ...CONFIGURATION, writable: false })
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, undefined, listConfiguration)} />)
++
++    const endpoint = await screen.findByRole('textbox', { name: 'endpoint' }) as HTMLInputElement
++    expect(endpoint.disabled).toBe(true)
++    expect((screen.getByRole('button', { name: en.saveConfiguration }) as HTMLButtonElement).disabled).toBe(true)
++  })
++
++  it('does not stage invalid JSON and identifies the field accessibly', async () => {
++    const mutateConfiguration = vi.fn<MutateConfiguration>()
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, undefined, async () => CONFIGURATION, mutateConfiguration)} />)
++
++    const metadata = await screen.findByRole('textbox', { name: 'metadata' })
++    fireEvent.change(metadata, { target: { value: '{' } })
++    fireEvent.blur(metadata)
++    expect(screen.getByText(en.invalidJson)).toBeTruthy()
++    expect(mutateConfiguration).not.toHaveBeenCalled()
++  })
++
++  it('contains rejected writes without exposing transport details', async () => {
++    const mutateConfiguration = vi.fn<MutateConfiguration>().mockRejectedValue(new Error('private storage detail'))
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, undefined, async () => CONFIGURATION, mutateConfiguration)} />)
++
++    fireEvent.change(await screen.findByRole('textbox', { name: 'endpoint' }), { target: { value: 'https://new.example' } })
++    fireEvent.click(screen.getByRole('button', { name: en.saveConfiguration }))
++    expect((await screen.findByRole('alert')).textContent).toContain(en.configurationSaveFailed)
++    expect(screen.queryByText('private storage detail')).toBeNull()
++  })
++
++  it('asks the user to refresh after a stale configuration write', async () => {
++    const conflict = Object.assign(new Error('revision changed'), { code: 'settings-conflict' })
++    const mutateConfiguration = vi.fn<MutateConfiguration>().mockRejectedValue(conflict)
++    const listConfiguration = vi.fn<PluginInventorySettingsTabInjected['listConfiguration']>().mockResolvedValue(CONFIGURATION)
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, undefined, listConfiguration, mutateConfiguration)} />)
++
++    fireEvent.change(await screen.findByRole('textbox', { name: 'endpoint' }), { target: { value: 'https://new.example' } })
++    fireEvent.click(screen.getByRole('button', { name: en.saveConfiguration }))
++    expect((await screen.findByRole('alert')).textContent).toContain(en.configurationConflict)
++    fireEvent.click(screen.getByRole('button', { name: en.refreshConfiguration }))
++    await waitFor(() => { expect(listConfiguration).toHaveBeenCalledTimes(2) })
++  })
++
+   it('renders runtime status only for enabled plugins', async () => {
+     const deferred = Promise.withResolvers<Snapshot>()
+     const list = vi.fn(() => deferred.promise)
+@@ -44,7 +178,7 @@ describe('PluginInventorySettingsTab', () => {
+     expect(screen.getByRole('searchbox', { name: en.search })).toBeTruthy()
+     expect(screen.getByRole('heading', { name: en.catalog })).toBeTruthy()
+     expect(view.container.querySelector('[data-plugin-count]')?.textContent).toBe('7')
+-    expect(screen.getAllByRole('listitem')).toHaveLength(7)
++    expect(view.container.querySelectorAll('[data-plugin-entry]')).toHaveLength(7)
+     expect(screen.getAllByText(en.enabledTag)).toHaveLength(6)
+     expect(screen.getByText(en.disabledTag)).toBeTruthy()
+     for (const value of [
+@@ -79,26 +213,26 @@ describe('PluginInventorySettingsTab', () => {
+   })
+ 
+   it('filters by module name or Loader entry id', async () => {
+-    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT)} />)
++    const view = render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT)} />)
+     const search = await screen.findByRole('searchbox', { name: en.search })
+ 
+     fireEvent.change(search, { target: { value: 'disabled-entry' } })
+-    expect(screen.getAllByRole('listitem')).toHaveLength(1)
++    expect(view.container.querySelectorAll('[data-plugin-entry]')).toHaveLength(1)
+     expect(screen.getByText('directory-picker-native')).toBeTruthy()
+ 
+     fireEvent.change(search, { target: { value: 'cordis-plugin-hmr' } })
+-    expect(screen.getAllByRole('listitem')).toHaveLength(1)
++    expect(view.container.querySelectorAll('[data-plugin-entry]')).toHaveLength(1)
+     expect(screen.getByText('hmr')).toBeTruthy()
+ 
+     fireEvent.change(search, { target: { value: 'not-a-plugin' } })
+-    expect(screen.queryAllByRole('listitem')).toHaveLength(0)
++    expect(view.container.querySelectorAll('[data-plugin-entry]')).toHaveLength(0)
+     expect(screen.getByText(en.emptySearch)).toBeTruthy()
+   })
+ 
+   it('shows a generic failure and retries into the empty state', async () => {
+     const list = vi.fn<PluginInventorySettingsTabInjected['list']>()
+       .mockRejectedValueOnce(new Error('private transport detail'))
+-      .mockResolvedValueOnce({ entries: [] })
++      .mockResolvedValueOnce({ entries: [], packages: [] })
+     render(<PluginInventorySettingsTab {...props(list)} />)
+ 
+     expect((await screen.findByRole('alert')).textContent).toBe(en.error)
+@@ -124,4 +258,88 @@ describe('PluginInventorySettingsTab', () => {
+     pendingFailure.unmount()
+     await act(async () => { deferredFailure.reject(new Error('late failure')) })
+   })
++
++  it('submits a source and refreshes only after the Host commits the install', async () => {
++    const afterInstall = { ...SNAPSHOT, packages: [...SNAPSHOT.packages, {
++      packageName: '@fixture/installed-now', source: '^2.0.0', isBundle: false, isBuiltin: false,
++    }] } as unknown as Snapshot
++    const list = vi.fn<PluginInventorySettingsTabInjected['list']>()
++      .mockResolvedValueOnce(SNAPSHOT)
++      .mockResolvedValueOnce(afterInstall)
++    const manage = vi.fn<Manage>().mockResolvedValue({
++      kind: 'install', ok: true, message: 'Installed', restartRequired: true,
++    })
++    render(<PluginInventorySettingsTab {...props(list, manage)} />)
++    const source = await screen.findByRole('textbox', { name: en.installSource })
++
++    fireEvent.change(source, { target: { value: '@fixture/installed-now@^2.0.0' } })
++    fireEvent.click(screen.getByRole('button', { name: en.install }))
++
++    await waitFor(() => {
++      expect(manage).toHaveBeenCalledWith({ kind: 'install', source: '@fixture/installed-now@^2.0.0' })
++    })
++    await waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
++    expect(screen.getByRole('status').textContent).toContain('Installed')
++    expect((screen.getByRole('textbox', { name: en.installSource }) as HTMLInputElement).value).toBe('')
++    expect(screen.getByText('@fixture/installed-now')).toBeTruthy()
++  })
++
++  it('confirms destructive changes and leaves Host mutations as the single state authority', async () => {
++    const manage = vi.fn<Manage>().mockImplementation(async (request) => ({
++      kind: request.kind,
++      ok: true,
++      message: 'Saved',
++      restartRequired: true,
++    }))
++    const list = vi.fn<PluginInventorySettingsTabInjected['list']>().mockResolvedValue(SNAPSHOT)
++    render(<PluginInventorySettingsTab {...props(list, manage)} />)
++    await screen.findByRole('searchbox', { name: en.search })
++
++    fireEvent.click(screen.getByRole('button', { name: 'hmr, Mounted, Enabled' }))
++    fireEvent.click(screen.getByRole('button', { name: 'Disable hmr' }))
++    const disableDialog = screen.getByRole('dialog', { name: en.disableTitle })
++    expect(disableDialog.textContent).toContain('hmr')
++    expect(manage).not.toHaveBeenCalled()
++    fireEvent.click(screen.getByRole('button', { name: en.confirm }))
++    await waitFor(() => {
++      expect(manage).toHaveBeenCalledWith({ kind: 'set-enabled', entryId: '8a1b2c3d', enabled: false })
++    })
++
++    fireEvent.click(screen.getByRole('button', { name: 'Uninstall @fixture/managed-plugin' }))
++    const uninstallDialog = screen.getByRole('dialog', { name: en.uninstallTitle })
++    expect(uninstallDialog.textContent).toContain('@fixture/managed-plugin')
++    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
++    expect(manage).toHaveBeenCalledTimes(1)
++
++    fireEvent.click(screen.getByRole('button', { name: 'Uninstall @fixture/managed-plugin' }))
++    fireEvent.click(screen.getByRole('button', { name: en.confirm }))
++    await waitFor(() => {
++      expect(manage).toHaveBeenLastCalledWith({ kind: 'uninstall', packageName: '@fixture/managed-plugin' })
++    })
++  })
++
++  it('contains a management transport failure without exposing its detail', async () => {
++    const manage = vi.fn<Manage>().mockRejectedValue(new Error('private transport detail'))
++    render(<PluginInventorySettingsTab {...props(async () => SNAPSHOT, manage)} />)
++    await screen.findByRole('searchbox', { name: en.search })
++
++    fireEvent.click(screen.getByRole('button', { name: 'Update @fixture/managed-plugin' }))
++    expect((await screen.findByRole('alert')).textContent).toBe(en.operationFailed)
++    expect(screen.queryByText('private transport detail')).toBeNull()
++  })
++
++  it('shows a built-in bundle without update or uninstall controls', async () => {
++    const snapshot = {
++      ...SNAPSHOT,
++      packages: [{
++        packageName: '@deepseek-ai/dsh-web-app', source: 'workspace:*', isBundle: true, isBuiltin: true,
++      }],
++    } as unknown as Snapshot
++    render(<PluginInventorySettingsTab {...props(async () => snapshot)} />)
++
++    expect(await screen.findByText('@deepseek-ai/dsh-web-app')).toBeTruthy()
++    expect(screen.getByText(en.builtInPackage)).toBeTruthy()
++    expect(screen.queryByRole('button', { name: 'Update @deepseek-ai/dsh-web-app' })).toBeNull()
++    expect(screen.queryByRole('button', { name: 'Uninstall @deepseek-ai/dsh-web-app' })).toBeNull()
++  })
+ })
+diff --git a/packages/client/ui-settings-plugin-inventory/tsconfig.json b/packages/client/ui-settings-plugin-inventory/tsconfig.json
+index dc07f1b..9e643e1 100644
+--- a/packages/client/ui-settings-plugin-inventory/tsconfig.json
++++ b/packages/client/ui-settings-plugin-inventory/tsconfig.json
+@@ -20,6 +20,9 @@
+     {
+       "path": "../runtime"
+     },
++    {
++      "path": "../schema-form"
++    },
+     {
+       "path": "../ui-settings"
+     },
+diff --git a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+index 0cd1f51..d6ba974 100644
+--- a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+@@ -1259,7 +1259,6 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+     slotInject: '',
+     declaredBy: 'an entry in \'sidebar.settings\' (client-ui-settings-general), so it exists while that entry is mounted',
+     occupants: [
+-      'client-ui-settings-models WelcomeNotice id \'welcome-notice\'',
+       'client-ui-settings-models DeepSeekOnboardingDialog id \'deepseek-official\'',
+     ],
+     replaceRisk: 'none',
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index bda9936..c904848 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -114,14 +114,9 @@ import { canOpenNativePath, openNativePath, openNativeTextFile } from './native-
+ const DEFAULT_MAX_MESSAGES = 50
+ 
+ /**
+- * Non-model settings namespaces intentionally served to the Web client. The
+- * plugin-owned entries (`agent-loop`, `bash`, `web-search-deepseek`) are the
+- * host-plane sections the plugin configuration page edits; a namespace absent
+- * here answers `settings-not-exposed` even when its owner registered it, so
+- * adding a section to that page is a decision made here rather than by the
+- * registering plugin. Moving that declaration to `settings.register()`, so a
+- * plugin can expose its own configuration without a change in this package,
+- * is deferred work.
++ * Non-model system namespaces intentionally served to the Web client. Product
++ * configuration pages still own these fixed entries; independently installed
++ * plugins opt into the generic form through `settings.register()` metadata.
+  */
+ const WEB_SETTINGS_NAMESPACES = [
+   'agent-loop', 'shell', 'locale', 'permission', 'ui-conversation', 'ui-theme', 'web-search-deepseek',
+@@ -1934,6 +1929,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+       ...descriptor.base === undefined ? {} : { base: descriptor.base },
+       ...descriptor.user === undefined ? {} : { user: descriptor.user },
+       applies: descriptor.applies,
++      ...descriptor.exposeToWeb === undefined ? {} : { exposeToWeb: descriptor.exposeToWeb },
+       secrets: (descriptor.secrets ?? []).map(secret => ({ path: [...secret.path], set: secret.set })),
+       revision: descriptor.revision,
+     }
+@@ -1946,14 +1942,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+ 
+   /**
+    * The settings namespaces this proxy serves: configurable model providers
+-   * plus the small explicit Web preference and product-owned allowlists. The
+-   * settings seam remains general; a future registration does not become
+-   * remotely readable or writable by default.
++   * plus small explicit preference/product allowlists and plugin-owned form
++   * registrations. The settings seam remains general: a future registration
++   * does not become remotely readable or writable without its own opt-in.
+    */
+   function exposedNamespaces(): Set<string> {
+     const exposed = modelProviderNamespaces()
+     for (const ns of WEB_SETTINGS_NAMESPACES) exposed.add(ns)
+     for (const ns of PRODUCT_SETTINGS_NAMESPACES) exposed.add(ns)
++    const settings = ctx.get('settings')
++    for (const descriptor of settings?.describe({ redactSecrets: true }) ?? []) {
++      if (descriptor.exposeToWeb === 'form') exposed.add(String(descriptor.ns))
++    }
+     return exposed
+   }
+ 
+diff --git a/packages/host/apiproxy/src/api/settings.schema.ts b/packages/host/apiproxy/src/api/settings.schema.ts
+index 19fa2c0..d419cad 100644
+--- a/packages/host/apiproxy/src/api/settings.schema.ts
++++ b/packages/host/apiproxy/src/api/settings.schema.ts
+@@ -22,6 +22,7 @@ export const settingsNamespaceViewSchema = z.object({
+   base: z.unknown().optional(),
+   user: z.unknown().optional(),
+   applies: z.union([z.literal('live'), z.literal('restart')]),
++  exposeToWeb: z.literal('form').optional(),
+   secrets: z.array(settingsSecretViewSchema),
+   revision: z.number(),
+ }) satisfies z.ZodType<Wire<SettingsNamespaceView>>
+diff --git a/packages/host/apiproxy/src/api/settings.ts b/packages/host/apiproxy/src/api/settings.ts
+index 5bbc6d5..4b31a05 100644
+--- a/packages/host/apiproxy/src/api/settings.ts
++++ b/packages/host/apiproxy/src/api/settings.ts
+@@ -30,6 +30,8 @@ export interface SettingsNamespaceView {
+   user?: unknown
+   /** When the owner applies changes. */
+   applies: 'live' | 'restart'
++  /** The owner explicitly permits this namespace to render through the generic Web form. */
++  exposeToWeb?: 'form'
+   /** Every schema-declared secret slot with its configured state. */
+   secrets: SettingsSecretView[]
+   /**
+diff --git a/packages/host/apiproxy/tests/api-proxy-config.spec.ts b/packages/host/apiproxy/tests/api-proxy-config.spec.ts
+index d4ba7b3..d97c666 100644
+--- a/packages/host/apiproxy/tests/api-proxy-config.spec.ts
++++ b/packages/host/apiproxy/tests/api-proxy-config.spec.ts
+@@ -321,7 +321,7 @@ describe('settings domain', () => {
+     expect(opened).toEqual([])
+   })
+ 
+-  it('serves model-provider and explicitly allowlisted Web namespaces only', async () => {
++  it('serves model-provider, allowlisted, and explicitly Web-form-exposed namespaces only', async () => {
+     // The settings seam is general: any plugin may register a namespace for
+     // its own configuration. The Web configuration plane remains opt-in, so a
+     // future internal plugin cannot become remotely configurable just by
+@@ -330,6 +330,10 @@ describe('settings domain', () => {
+     const ctx = await harness()
+     ctx.settings.register(NS, AdapterConfig)
+     ctx.settings.register(settingsNamespace('some-other-plugin'), z.object({ secretPath: z.string() }))
++    ctx.settings.register(settingsNamespace('plugin-form'), z.object({
++      endpoint: z.string(),
++      apiKey: z.string().role('secret'),
++    }), { exposeToWeb: 'form' })
+     ctx.settings.register(settingsNamespace('permission'), z.object({
+       defaultPreset: z.union(['read-only', 'workspace-write']).required(),
+     }), {
+@@ -357,9 +361,15 @@ describe('settings domain', () => {
+ 
+     const value = expectOk(await api.settings.describe(request({})))
+     expect(value.namespaces.map(view => view.ns)).toEqual([
+-      'llm-deepseek', 'permission', 'ui-theme', 'locale', 'ui-conversation',
+-      'shell', 'agent-loop', 'web-search-deepseek',
++      'llm-deepseek', 'plugin-form', 'permission', 'ui-theme', 'locale',
++      'ui-conversation', 'shell', 'agent-loop', 'web-search-deepseek',
+     ])
++    const pluginForm = expectOk(await api.settings.mutate(request({
++      ns: 'plugin-form',
++      ops: [{ op: 'set', path: ['endpoint'], value: 'https://plugin.test/v1' }],
++    })))
++    expect(pluginForm.exposeToWeb).toBe('form')
++    expect(pluginForm.value).toEqual({ endpoint: 'https://plugin.test/v1' })
+     const permission = expectOk(await api.settings.mutate(request({
+       ns: 'permission',
+       ops: [{ op: 'set', path: ['defaultPreset'], value: 'workspace-write' }],
+diff --git a/packages/host/plugin-inventory/package.json b/packages/host/plugin-inventory/package.json
+index 0f020b3..685c049 100644
+--- a/packages/host/plugin-inventory/package.json
++++ b/packages/host/plugin-inventory/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@deepseek-ai/dsh-host-plugin-inventory",
+-  "description": "Read-only Remote projection of current Cordis Loader plugin state",
++  "description": "Profile-aware Remote projection and management of current Cordis Loader plugin state",
+   "version": "0.1.0-rc.5",
+   "publishConfig": {
+     "access": "public"
+@@ -49,11 +49,14 @@
+   ],
+   "license": "MIT",
+   "dependencies": {
++    "@deepseek-ai/dsh-app-boot": "workspace:^",
++    "js-yaml": "^4.2.0",
+     "zod": "^4.4.3"
+   },
+   "peerDependencies": {
+     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+     "@deepseek-ai/dsh-brand": "workspace:^",
++    "@deepseek-ai/dsh-home-paths": "workspace:^",
+     "@deepseek-ai/dsh-invariants": "workspace:^",
+     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
+     "@deepseek-ai/cordis": "workspace:^"
+@@ -61,6 +64,8 @@
+   "devDependencies": {
+     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+     "@deepseek-ai/dsh-brand": "workspace:^",
++    "@deepseek-ai/dsh-home-paths": "workspace:^",
++    "@types/js-yaml": "^4.0.9",
+     "@deepseek-ai/dsh-invariants": "workspace:^",
+     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
+     "@deepseek-ai/cordis": "workspace:^"
+diff --git a/packages/host/plugin-inventory/src/index.ts b/packages/host/plugin-inventory/src/index.ts
+index ff5394c..8a352e0 100644
+--- a/packages/host/plugin-inventory/src/index.ts
++++ b/packages/host/plugin-inventory/src/index.ts
+@@ -9,8 +9,11 @@ import type {
+   PluginEntryId,
+   PluginFiberPhase,
+   PluginInventoryEntry,
++  PluginManagementReceipt,
++  PluginManagementRequest,
+   PluginInventorySnapshot,
+ } from './types.ts'
++import { ProfilePluginManager } from './profile-manager.ts'
+ 
+ export type * from './types.ts'
+ 
+@@ -43,6 +46,8 @@ const FIBER_PHASE = {
+ export class PluginInventoryGateway extends TypertRemoteService {
+   static inject = ['loader']
+ 
++  private readonly manager = new ProfilePluginManager()
++
+   constructor(ctx: Context) {
+     super(ctx, 'pluginInventory')
+   }
+@@ -65,7 +70,17 @@ export class PluginInventoryGateway extends TypertRemoteService {
+         fiberPhase: entry.fiber === undefined ? null : FIBER_PHASE[entry.fiber.state],
+       })
+     }
+-    return { entries }
++    return { entries, packages: this.manager.list() }
++  }
++
++  /**
++   * Persist one user-confirmed package or enablement mutation for the Web profile.
++   * @param request - Fixed package-management action selected by the settings page.
++   * @returns A committed result and whether the Harness service must restart.
++   */
++  @Remote('manage')
++  manage(request: PluginManagementRequest): Promise<PluginManagementReceipt> {
++    return this.manager.manage(request, this.list().entries)
+   }
+ }
+ 
+diff --git a/packages/host/plugin-inventory/src/profile-manager.ts b/packages/host/plugin-inventory/src/profile-manager.ts
+new file mode 100644
+index 0000000..30103eb
+--- /dev/null
++++ b/packages/host/plugin-inventory/src/profile-manager.ts
+@@ -0,0 +1,291 @@
++/** Persistent, profile-scoped package and enablement management for the Web UI. */
++
++import { spawn } from 'node:child_process'
++import { existsSync, promises as fs } from 'node:fs'
++import { dirname, join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import yaml from 'js-yaml'
++import {
++  DEFAULT_PROFILE_BUNDLES,
++  initProfile,
++  PROFILE_TEMPLATES,
++  readProfileManifest,
++  resolveBundleDir,
++  resolveProfileDir,
++  writeProfileManifest,
++  type ProfileManifest,
++} from '@deepseek-ai/dsh-app-boot'
++import type {
++  PluginInventoryEntry,
++  PluginManagementReceipt,
++  PluginManagementRequest,
++  ProfilePluginPackage,
++} from './types.ts'
++
++const NAME = 'dsh'
++const PROFILE_NAME = 'web'
++const MANAGED_STATE_MARKER = '# dsh-plugin-manager: managed enablement states'
++const MAX_SPEC_LENGTH = 512
++const MAX_COMMAND_OUTPUT = 16 * 1024
++const INSTALL_ANCHOR = fileURLToPath(import.meta.url)
++const BUILTIN_WEB_BUNDLES = new Set(PROFILE_TEMPLATES[PROFILE_NAME] ?? DEFAULT_PROFILE_BUNDLES)
++
++/** A completed external package-manager process. */
++interface CommandResult {
++  readonly code: number
++  readonly output: string
++}
++
++/** Validate package sources before they become a pnpm positional argument. */
++function packageSource(value: string): string | undefined {
++  const source = value.trim()
++  if (source.length === 0 || source.length > MAX_SPEC_LENGTH || source.startsWith('-') || source.includes('\0')) {
++    return undefined
++  }
++  return source
++}
++
++/** Validate a profile dependency name used for update and uninstall. */
++function packageName(value: string): string | undefined {
++  const name = value.trim()
++  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) return undefined
++  return name
++}
++
++/** Bound command diagnostics without splitting multi-byte text sequences. */
++function appendOutput(current: string, chunk: string): string {
++  if (current.length >= MAX_COMMAND_OUTPUT) return current
++  return `${current}${chunk}`.slice(0, MAX_COMMAND_OUTPUT)
++}
++
++/** Resolve the pnpm process shipped by Desktop, or use the developer's PATH. */
++function packageManagerCommand(args: readonly string[]): { command: string; args: readonly string[]; shell: boolean } {
++  const bundled = process.env.DSH_PNPM_BIN
++  if (bundled !== undefined && bundled.length > 0) {
++    return { command: process.execPath, args: [bundled, ...args], shell: false }
++  }
++  return { command: 'pnpm', args, shell: process.platform === 'win32' }
++}
++
++/** Run pnpm once and collect only a bounded diagnostic tail. */
++function runPackageManager(cwd: string, args: readonly string[]): Promise<CommandResult> {
++  const invocation = packageManagerCommand(args)
++  return new Promise((resolve) => {
++    const child = spawn(invocation.command, invocation.args, {
++      cwd,
++      shell: invocation.shell,
++      stdio: ['ignore', 'pipe', 'pipe'],
++    })
++    let output = ''
++    child.stdout.on('data', (chunk: Buffer) => { output = appendOutput(output, String(chunk)) })
++    child.stderr.on('data', (chunk: Buffer) => { output = appendOutput(output, String(chunk)) })
++    child.once('error', (error) => {
++      resolve({ code: 127, output: appendOutput(output, error.message) })
++    })
++    child.once('close', (code) => { resolve({ code: code ?? 1, output }) })
++  })
++}
++
++/** Whether one resolved dependency supplies a profile patch layer. */
++function exportsPatch(name: string, profileDir: string): boolean {
++  try {
++    const directory = resolveBundleDir(NAME, name, INSTALL_ANCHOR, profileDir)
++    return readProfileManifest(NAME, directory).dsh?.bundle?.patch !== undefined
++  } catch {
++    return false
++  }
++}
++
++/** Reconcile profile bundle layers with the installed dependency manifest. */
++function reconcileBundles(before: ProfileManifest, profileDir: string): void {
++  const after = readProfileManifest(NAME, profileDir)
++  const beforeDependencies = new Set(Object.keys(before.dependencies ?? {}))
++  const dependencies = Object.keys(after.dependencies ?? {})
++  const bundles = [...(after.dsh?.profile?.bundles ?? [])]
++  let changed = false
++  for (const name of dependencies) {
++    const isBundle = exportsPatch(name, profileDir)
++    if (isBundle && !bundles.includes(name)) {
++      bundles.push(name)
++      changed = true
++    } else if (!isBundle && !beforeDependencies.has(name)) {
++      // A plain library is allowed in a profile but cannot be mounted by Harness.
++      continue
++    }
++  }
++  const retained = bundles.filter(name => {
++    const isTemplate = (PROFILE_TEMPLATES[PROFILE_NAME] ?? DEFAULT_PROFILE_BUNDLES).includes(name)
++    return isTemplate || dependencies.includes(name)
++  })
++  if (retained.length !== bundles.length) changed = true
++  if (!changed) return
++  writeProfileManifest(profileDir, {
++    ...after,
++    dsh: {
++      ...after.dsh,
++      profile: { ...after.dsh?.profile, bundles: retained },
++    },
++  })
++}
++
++/** Read the marker-owned tail of a profile patch as entry-id enablement states. */
++function readManagedStates(content: string): Map<string, boolean> {
++  const markerAt = content.lastIndexOf(MANAGED_STATE_MARKER)
++  if (markerAt < 0) return new Map()
++  const raw = content.slice(markerAt + MANAGED_STATE_MARKER.length).trim()
++  if (raw.length === 0) return new Map()
++  const parsed = yaml.load(raw)
++  if (!Array.isArray(parsed)) throw new Error('插件启停状态区块格式无效。')
++  const states = new Map<string, boolean>()
++  for (const item of parsed) {
++    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
++      throw new Error('插件启停状态区块包含无效条目。')
++    }
++    const value = item as { id?: unknown; disabled?: unknown }
++    if (typeof value.id !== 'string' || typeof value.disabled !== 'boolean') {
++      throw new Error('插件启停状态区块包含无效状态。')
++    }
++    states.set(value.id, !value.disabled)
++  }
++  return states
++}
++
++/** Render the profile patch with a final marker-owned enablement-state section. */
++function renderManagedStates(content: string, states: ReadonlyMap<string, boolean>): string {
++  const markerAt = content.lastIndexOf(MANAGED_STATE_MARKER)
++  let prefix = markerAt < 0 ? content.trimEnd() : content.slice(0, markerAt).trimEnd()
++  const rows = [...states.entries()].map(([id, enabled]) => ({ id, disabled: !enabled }))
++  if (rows.length === 0) return `${prefix}\n`
++  // A freshly initialized profile carries comments followed by `[]`. Replacing
++  // that empty root is necessary before appending sequence entries.
++  prefix = prefix.replace(/\[\]\s*$/, '').trimEnd()
++  const list = yaml.dump(rows, { noRefs: true, lineWidth: -1 }).trimEnd()
++  return `${prefix}${prefix.length === 0 ? '' : '\n'}${MANAGED_STATE_MARKER}\n${list}\n`
++}
++
++/** Atomically replace one profile patch after the caller constructed its full contents. */
++async function writePatch(path: string, content: string): Promise<void> {
++  const staged = join(dirname(path), `.${Date.now()}-${process.pid}.plugin-patch.yml`)
++  try {
++    await fs.writeFile(staged, content, 'utf8')
++    await fs.rename(staged, path)
++  } finally {
++    await fs.rm(staged, { force: true })
++  }
++}
++
++/** Profile manager owned by the live Web Host process. */
++export class ProfilePluginManager {
++  private tail: Promise<void> = Promise.resolve()
++
++  /** List profile-managed dependencies and whether each is a mountable Harness bundle. */
++  list(): readonly ProfilePluginPackage[] {
++    const directory = this.profileDir()
++    const manifest = readProfileManifest(NAME, directory)
++    return Object.entries(manifest.dependencies ?? {}).map(([name, source]) => ({
++      packageName: name,
++      source,
++      isBundle: exportsPatch(name, directory),
++      isBuiltin: BUILTIN_WEB_BUNDLES.has(name),
++    }))
++  }
++
++  /** Serialize profile changes so concurrent browser gestures cannot race package.json or patch state. */
++  manage(request: PluginManagementRequest, entries: readonly PluginInventoryEntry[]): Promise<PluginManagementReceipt> {
++    const operation = this.tail.then(async () => {
++      try {
++        return await this.manageOnce(request, entries)
++      } catch (error) {
++        return {
++          kind: request.kind,
++          ok: false,
++          message: error instanceof Error ? error.message : String(error),
++          restartRequired: false,
++        }
++      }
++    })
++    this.tail = operation.then(() => undefined, () => undefined)
++    return operation
++  }
++
++  private profileDir(): string {
++    const directory = resolveProfileDir(PROFILE_NAME)
++    if (!existsSync(join(directory, 'package.json'))) {
++      initProfile(directory, PROFILE_TEMPLATES[PROFILE_NAME] ?? DEFAULT_PROFILE_BUNDLES)
++    }
++    return directory
++  }
++
++  private async manageOnce(
++    request: PluginManagementRequest,
++    entries: readonly PluginInventoryEntry[],
++  ): Promise<PluginManagementReceipt> {
++    if (request.kind === 'set-enabled') return this.setEnabled(request.entryId, request.enabled, entries)
++    const directory = this.profileDir()
++    const manifest = readProfileManifest(NAME, directory)
++    const source = request.kind === 'install' ? packageSource(request.source) : undefined
++    const target = request.kind === 'install' ? undefined : packageName(request.packageName)
++    if (source === undefined && target === undefined) {
++      return { kind: request.kind, ok: false, message: '插件来源或包名无效。', restartRequired: false }
++    }
++    if (target !== undefined && manifest.dependencies?.[target] === undefined) {
++      return { kind: request.kind, ok: false, message: '该插件不属于当前 Web profile，无法修改。', restartRequired: false }
++    }
++    if (target !== undefined && BUILTIN_WEB_BUNDLES.has(target)) {
++      return {
++        kind: request.kind,
++        ok: false,
++        message: '内置组合包由当前 Harness 版本提供，不能在插件中心更新或卸载。',
++        restartRequired: false,
++      }
++    }
++    const args = request.kind === 'install'
++      ? ['add', '--save-prod', source as string]
++      : request.kind === 'update'
++        ? ['update', target as string]
++        : ['remove', target as string]
++    const result = await runPackageManager(directory, args)
++    if (result.code !== 0) {
++      return {
++        kind: request.kind,
++        ok: false,
++        message: '插件操作失败，未应用任何新的 Harness 配置。',
++        ...result.output.length === 0 ? {} : { output: result.output },
++        restartRequired: false,
++      }
++    }
++    reconcileBundles(manifest, directory)
++    if (request.kind === 'uninstall') {
++      // pnpm may retain a local `link:` symlink after it has removed the
++      // dependency declaration. Keep a removed plugin unreachable by profile
++      // resolution until a future install explicitly adds it back.
++      await fs.rm(join(directory, 'node_modules', target as string), { recursive: true, force: true })
++    }
++    return {
++      kind: request.kind,
++      ok: true,
++      message: '插件配置已更新，重启 Harness 后生效。',
++      ...result.output.length === 0 ? {} : { output: result.output },
++      restartRequired: true,
++    }
++  }
++
++  private async setEnabled(
++    entryId: string,
++    enabled: boolean,
++    entries: readonly PluginInventoryEntry[],
++  ): Promise<PluginManagementReceipt> {
++    if (!entries.some(entry => entry.entryId === entryId)) {
++      return { kind: 'set-enabled', ok: false, message: '找不到要修改的已加载插件。', restartRequired: false }
++    }
++    if (entryId.length === 0 || entryId.length > MAX_SPEC_LENGTH || entryId.includes('\0') || /[\r\n]/.test(entryId)) {
++      return { kind: 'set-enabled', ok: false, message: '插件标识无效。', restartRequired: false }
++    }
++    const patch = join(this.profileDir(), 'cordis.patch.yml')
++    const content = await fs.readFile(patch, 'utf8')
++    const states = readManagedStates(content)
++    states.set(entryId, enabled)
++    await writePatch(patch, renderManagedStates(content, states))
++    return { kind: 'set-enabled', ok: true, message: '插件启停状态已保存，重启 Harness 后生效。', restartRequired: true }
++  }
++}
+diff --git a/packages/host/plugin-inventory/src/types.ts b/packages/host/plugin-inventory/src/types.ts
+index f5678fc..11cf5de 100644
+--- a/packages/host/plugin-inventory/src/types.ts
++++ b/packages/host/plugin-inventory/src/types.ts
+@@ -22,7 +22,42 @@ export interface PluginInventoryEntry {
+   readonly fiberPhase: PluginFiberPhase
+ }
+ 
++/** One package declared in the current Web profile. */
++export interface ProfilePluginPackage {
++  /** Dependency name written in the profile manifest. */
++  readonly packageName: string
++  /** The exact dependency source requested by the profile. */
++  readonly source: string
++  /** Whether the installed package contributes a Harness bundle layer. */
++  readonly isBundle: boolean
++  /** Whether this package is supplied by the current Harness Web template. */
++  readonly isBuiltin: boolean
++}
++
++/** A profile mutation the Plugin settings page may request. */
++export type PluginManagementRequest =
++  | { readonly kind: 'install'; readonly source: string }
++  | { readonly kind: 'update'; readonly packageName: string }
++  | { readonly kind: 'uninstall'; readonly packageName: string }
++  | { readonly kind: 'set-enabled'; readonly entryId: PluginEntryId; readonly enabled: boolean }
++
++/** The result of one accepted Plugin settings mutation. */
++export interface PluginManagementReceipt {
++  /** The requested profile mutation. */
++  readonly kind: PluginManagementRequest['kind']
++  /** Whether the profile change was committed. */
++  readonly ok: boolean
++  /** Concise, user-presentable operation outcome. */
++  readonly message: string
++  /** The bounded package-manager diagnostics when an external command ran. */
++  readonly output?: string
++  /** Every supported mutation applies when the Harness service restarts. */
++  readonly restartRequired: boolean
++}
++
+ /** Point-in-time inventory returned by the plugin inventory Remote. */
+ export interface PluginInventorySnapshot {
+   readonly entries: readonly PluginInventoryEntry[]
++  /** User-installed packages declared by the active Web profile. */
++  readonly packages: readonly ProfilePluginPackage[]
+ }
+diff --git a/packages/host/plugin-inventory/tests/inventory.spec.ts b/packages/host/plugin-inventory/tests/inventory.spec.ts
+index cd43c49..56482ea 100644
+--- a/packages/host/plugin-inventory/tests/inventory.spec.ts
++++ b/packages/host/plugin-inventory/tests/inventory.spec.ts
+@@ -1,13 +1,22 @@
+ import { afterEach, describe, expect, it } from 'vitest'
+ import { Context, type Plugin } from '@deepseek-ai/cordis'
+ import Loader from '@deepseek-ai/cordis-plugin-loader'
++import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
+ import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
+ import PluginInventoryGateway from '../src/index.ts'
+ 
+ const contexts: Context[] = []
++const originalDshHome = process.env.DSH_HOME
++const homes: string[] = []
+ 
+ afterEach(async () => {
+   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
++  for (const home of homes.splice(0)) rmSync(home, { force: true, recursive: true })
++  if (originalDshHome === undefined) delete process.env.DSH_HOME
++  else process.env.DSH_HOME = originalDshHome
+ })
+ 
+ const activePlugin: Plugin.Function = () => {}
+@@ -16,10 +25,47 @@ const pendingPlugin: Plugin.Object = {
+   apply() {},
+ }
+ 
++/**
++ * Minimal local pnpm stand-in used to verify profile mutations without a
++ * registry request. The production manager still invokes its bundled pnpm
++ * entry through the same process path.
++ */
++function packageManagerFixture(home: string): string {
++  const executable = join(home, 'pnpm-fixture.cjs')
++  writeFileSync(executable, `
++const { mkdirSync, readFileSync, writeFileSync } = require('node:fs')
++const { join } = require('node:path')
++const args = process.argv.slice(2)
++const manifest = JSON.parse(readFileSync('package.json', 'utf8'))
++manifest.dependencies ||= {}
++if (args[0] === 'add') {
++  const source = args.at(-1)
++  const delimiter = source.lastIndexOf('@')
++  const name = delimiter > 0 ? source.slice(0, delimiter) : source
++  manifest.dependencies[name] = delimiter > 0 ? source.slice(delimiter + 1) : '*'
++  const installed = join('node_modules', name)
++  mkdirSync(installed, { recursive: true })
++  writeFileSync(join(installed, 'package.json'), JSON.stringify({ name }))
++} else if (args[0] === 'update') {
++  manifest.dependencies[args[1]] = '^2.0.0'
++} else if (args[0] === 'remove') {
++  delete manifest.dependencies[args[1]]
++} else {
++  process.exitCode = 1
++}
++writeFileSync('package.json', JSON.stringify(manifest, null, 2))
++`, 'utf8')
++  return executable
++}
++
+ async function harness(): Promise<{
+   ctx: Context
+   inventory: PluginInventoryGateway
++  home: string
+ }> {
++  const home = mkdtempSync(join(tmpdir(), 'dsh-plugin-inventory-'))
++  homes.push(home)
++  process.env.DSH_HOME = home
+   const ctx = new Context()
+   contexts.push(ctx)
+   await ctx.plugin(Loader)
+@@ -27,7 +73,7 @@ async function harness(): Promise<{
+   ctx.loader.builtins.pending = pendingPlugin
+   await ctx.plugin(PluginInventoryGateway)
+   const inventory = ctx.get('pluginInventory') as PluginInventoryGateway
+-  return { ctx, inventory }
++  return { ctx, inventory, home }
+ }
+ 
+ describe('PluginInventoryGateway', () => {
+@@ -39,6 +85,7 @@ describe('PluginInventoryGateway', () => {
+     })
+     expect(remoteMethods(inventory)).toEqual([
+       { method: 'list', invocation: { kind: 'direct' } },
++      { method: 'manage', invocation: { kind: 'direct' } },
+     ])
+   })
+ 
+@@ -86,4 +133,73 @@ describe('PluginInventoryGateway', () => {
+     await ctx.loader.remove(pendingId)
+     expect(inventory.list().entries.some(entry => entry.entryId === pendingId)).toBe(false)
+   })
++
++  it('persists an entry enablement change in the isolated web profile', async () => {
++    const { ctx, inventory, home } = await harness()
++    ctx.loader.builtins.controlled = activePlugin
++    await ctx.loader.create({ name: 'cordis:controlled' })
++    const entry = inventory.list().entries.find(candidate => candidate.moduleName === 'cordis:controlled')
++    expect(entry).toBeDefined()
++    if (entry === undefined) throw new Error('受控插件未出现在清单中。')
++
++    await expect(inventory.manage({ kind: 'set-enabled', entryId: entry.entryId, enabled: false })).resolves.toMatchObject({
++      kind: 'set-enabled',
++      ok: true,
++      restartRequired: true,
++    })
++    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
++    const content = readFileSync(patch, 'utf8')
++    expect(content).toContain('# dsh-plugin-manager: managed enablement states')
++    expect(content).toContain('disabled: true')
++    expect(loadOverlayPatches('test', patch)).toContainEqual({ id: entry.entryId, disabled: true })
++  })
++
++  it('installs, updates and uninstalls profile packages through the bundled pnpm transport', async () => {
++    const { inventory, home } = await harness()
++    const originalPnpm = process.env.DSH_PNPM_BIN
++    process.env.DSH_PNPM_BIN = packageManagerFixture(home)
++    try {
++      await expect(inventory.manage({ kind: 'install', source: '@fixture/managed@^1.0.0' })).resolves.toMatchObject({
++        kind: 'install', ok: true, restartRequired: true,
++      })
++      expect(inventory.list().packages).toContainEqual({
++        packageName: '@fixture/managed', source: '^1.0.0', isBundle: false, isBuiltin: false,
++      })
++
++      await expect(inventory.manage({ kind: 'update', packageName: '@fixture/managed' })).resolves.toMatchObject({
++        kind: 'update', ok: true, restartRequired: true,
++      })
++      expect(inventory.list().packages).toContainEqual({
++        packageName: '@fixture/managed', source: '^2.0.0', isBundle: false, isBuiltin: false,
++      })
++
++      await expect(inventory.manage({ kind: 'uninstall', packageName: '@fixture/managed' })).resolves.toMatchObject({
++        kind: 'uninstall', ok: true, restartRequired: true,
++      })
++      expect(inventory.list().packages).not.toContainEqual(expect.objectContaining({ packageName: '@fixture/managed' }))
++      expect(existsSync(join(home, 'profiles', 'web', 'node_modules', '@fixture', 'managed'))).toBe(false)
++    } finally {
++      if (originalPnpm === undefined) delete process.env.DSH_PNPM_BIN
++      else process.env.DSH_PNPM_BIN = originalPnpm
++    }
++  })
++
++  it('rejects updates and removals of an in-box Web bundle', async () => {
++    const { inventory, home } = await harness()
++    inventory.list()
++    const manifestPath = join(home, 'profiles', 'web', 'package.json')
++    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
++    manifest.dependencies = { ...manifest.dependencies, '@deepseek-ai/dsh-web-app': 'workspace:*' }
++    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
++
++    expect(inventory.list().packages).toContainEqual({
++      packageName: '@deepseek-ai/dsh-web-app', source: 'workspace:*', isBundle: true, isBuiltin: true,
++    })
++    await expect(inventory.manage({ kind: 'update', packageName: '@deepseek-ai/dsh-web-app' })).resolves.toMatchObject({
++      kind: 'update', ok: false, restartRequired: false,
++    })
++    await expect(inventory.manage({ kind: 'uninstall', packageName: '@deepseek-ai/dsh-web-app' })).resolves.toMatchObject({
++      kind: 'uninstall', ok: false, restartRequired: false,
++    })
++  })
+ })
+diff --git a/packages/host/plugin-inventory/tsconfig.json b/packages/host/plugin-inventory/tsconfig.json
+index 5bd45b3..0290abf 100644
+--- a/packages/host/plugin-inventory/tsconfig.json
++++ b/packages/host/plugin-inventory/tsconfig.json
+@@ -17,6 +17,9 @@
+     {
+       "path": "../../util/brand"
+     },
++    {
++      "path": "../../boot/app-boot"
++    },
+     {
+       "path": "../../typert/protocol"
+     },
+diff --git a/packages/settings/settings/src/index.ts b/packages/settings/settings/src/index.ts
+index 4150aa9..5d31c7f 100644
+--- a/packages/settings/settings/src/index.ts
++++ b/packages/settings/settings/src/index.ts
+@@ -8,11 +8,11 @@
+ 
+ import { Context, Service } from '@deepseek-ai/cordis'
+ import type z from '@deepseek-ai/schemastery'
+-import { redactSecrets } from './redact.ts'
++import { redactSchemaDefaults, redactSecrets } from './redact.ts'
+ import type { RedactedSecret } from './redact.ts'
+ import type { SettingsNamespace, SettingsUpdateSource } from './types.ts'
+ 
+-export { redactSecrets } from './redact.ts'
++export { redactSchemaDefaults, redactSecrets } from './redact.ts'
+ export type { RedactedSecret, RedactedValue } from './redact.ts'
+ export type { SettingsNamespace, SettingsUpdateSource } from './types.ts'
+ 
+@@ -33,12 +33,21 @@ export function settingsNamespace(value: string): SettingsNamespace {
+ /** When a namespace's changes take effect for its owner. */
+ export type SettingsApplies = 'live' | 'restart'
+ 
++/** A configuration UI the namespace owner explicitly permits the Web client to render. */
++export type SettingsWebPresentation = 'form'
++
+ /** Registration options beyond the namespace schema. */
+ export interface SettingsRegisterOptions<T> {
+   /** Composition-layer values resolved below the user layer (entry-config subset). */
+   base?: Partial<T>
+   /** Owner's effect timing, surfaced to configuration UIs; defaults to `live`. */
+   applies?: SettingsApplies
++  /**
++   * Explicitly permit a Web configuration client to read and edit this
++   * namespace through its serialized schema. Registration alone never broadens
++   * the remotely writable settings surface.
++   */
++  exposeToWeb?: SettingsWebPresentation
+   /**
+    * Reject a resolved section the owner could not act on, for constraints its
+    * schema cannot express — a cross-field requirement, or one field's validity
+@@ -67,7 +76,7 @@ export interface SettingsDescriptor {
+   // public API, provider contract, implementations, tests, and consumers.
+   /** The registered namespace. */
+   ns: SettingsNamespace
+-  /** Serialized schemastery schema (`schema.toJSON()`). */
++  /** Serialized schemastery schema (`schema.toJSON()`), with secret defaults removed under `redactSecrets`. */
+   schema: unknown
+   /** Current resolved value. */
+   value: unknown
+@@ -85,6 +94,8 @@ export interface SettingsDescriptor {
+   user?: unknown
+   /** Owner's declared effect timing. */
+   applies: SettingsApplies
++  /** The Web presentation the owner explicitly permitted, when any. */
++  exposeToWeb?: SettingsWebPresentation
+   /** Schema-declared secret positions; present only under `redactSecrets`. */
+   secrets?: RedactedSecret[]
+ }
+@@ -92,9 +103,9 @@ export interface SettingsDescriptor {
+ /** Options for {@link SettingsProvider.describe}. */
+ export interface SettingsDescribeOptions {
+   /**
+-   * Strip `role('secret')` fields from `value`/`base`/`user` and enumerate
+-   * them in each descriptor's `secrets`. Every wire surface MUST pass this;
+-   * the verbatim default exists for same-process configuration UIs only.
++   * Strip `role('secret')` fields from values and schema defaults, then
++   * enumerate them in each descriptor's `secrets`. Every wire surface MUST
++   * pass this; the verbatim default exists for same-process configuration UIs.
+    */
+   redactSecrets?: boolean
+ }
+@@ -326,6 +337,7 @@ interface SettingsRegistration {
+   schema: z<unknown>
+   base: unknown
+   applies: SettingsApplies
++  exposeToWeb?: SettingsWebPresentation
+   /** Owner-supplied check for constraints the schema cannot express. */
+   validate?: (value: unknown) => void
+   resolved: unknown
+@@ -441,6 +453,7 @@ export abstract class SettingsProvider extends Service {
+       schema: schema as z<unknown>,
+       base: options?.base,
+       applies: options?.applies ?? 'live',
++      ...options?.exposeToWeb === undefined ? {} : { exposeToWeb: options.exposeToWeb },
+       ...options?.validate === undefined
+         ? {}
+         : { validate: options.validate as (value: unknown) => void },
+@@ -489,20 +502,23 @@ export abstract class SettingsProvider extends Service {
+       }
+       const base = registration.base === undefined ? undefined : structuredClone(registration.base)
+       const detachedUser = user === undefined ? undefined : structuredClone(user)
++      const serialized = registration.schema.toJSON()
+       const descriptor: SettingsDescriptor = {
+         ns: registration.ns,
+-        schema: registration.schema.toJSON(),
++        schema: serialized,
+         value: registration.resolved,
+         revision: registration.revision,
+         ...base === undefined ? {} : { base },
+         ...detachedUser === undefined ? {} : { user: detachedUser },
+         applies: registration.applies,
++        ...registration.exposeToWeb === undefined ? {} : { exposeToWeb: registration.exposeToWeb },
+       }
+       if (options?.redactSecrets !== true) return descriptor
+       const schema = registration.schema as z<never>
+       const redacted = redactSecrets(schema, registration.resolved)
+       return {
+         ...descriptor,
++        schema: redactSchemaDefaults(schema, serialized),
+         value: redacted.value,
+         ...base === undefined ? {} : { base: redactSecrets(schema, base).value },
+         ...detachedUser === undefined ? {} : { user: redactSecrets(schema, detachedUser).value },
+diff --git a/packages/settings/settings/src/redact.ts b/packages/settings/settings/src/redact.ts
+index 18664bc..4af891f 100644
+--- a/packages/settings/settings/src/redact.ts
++++ b/packages/settings/settings/src/redact.ts
+@@ -1,9 +1,9 @@
+ /**
+- * Structural secret redaction for settings values. `role('secret')` fields are
+- * removed from a value before it crosses a wire boundary; a sidecar records
+- * each schema-declared secret position and whether it currently holds a value,
+- * so a configuration surface can render a write-only input without ever
+- * receiving the secret itself.
++ * Structural secret redaction for settings values and serialized schema
++ * defaults. `role('secret')` fields are removed before they cross a wire
++ * boundary; a sidecar records each schema-declared secret position and whether
++ * it currently holds a value, so a configuration surface can render a
++ * write-only input without ever receiving the secret itself.
+  * @module @deepseek-ai/dsh-settings/redact
+  */
+ 
+@@ -14,12 +14,15 @@ import type z from '@deepseek-ai/schemastery'
+  * redactor walks are named; everything else on the instance is ignored.
+  */
+ interface SchemaNode {
++  uid?: number
+   type?: string
+-  meta?: { role?: unknown }
++  meta?: { role?: unknown; default?: unknown }
+   /** `object` properties, keyed by property name. */
+   dict?: Record<string, SchemaNode>
+-  /** `dict`/`array` element schema. */
++  /** `dict`/`array`/`transform` element schema. */
+   inner?: SchemaNode
++  /** `tuple`/`union`/`intersect` member schemas. */
++  list?: SchemaNode[]
+ }
+ 
+ /** One schema-declared secret position inside a redacted value. */
+@@ -47,10 +50,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
+   return typeof value === 'object' && value !== null && !Array.isArray(value)
+ }
+ 
++/** Record a secret slot only once when several composite branches reach it. */
++function recordSecret(secrets: RedactedSecret[], path: string[], value: unknown): void {
++  if (secrets.some(secret => secret.path.length === path.length
++    && secret.path.every((segment, index) => segment === path[index]))) return
++  secrets.push({ path, set: value !== undefined })
++}
++
++/** Schema leaf types that cannot contain another schema-declared secret. */
++const SAFE_LEAF_TYPES = new Set([
++  'any', 'never', 'const', 'string', 'number', 'boolean', 'bitset', 'function', 'is',
++])
++
+ function walk(node: SchemaNode | undefined, value: unknown, path: string[], secrets: RedactedSecret[]): unknown {
+   if (node === undefined) return value
+   if (node.meta?.role === 'secret') {
+-    secrets.push({ path, set: value !== undefined })
++    recordSecret(secrets, path, value)
+     return undefined
+   }
+   switch (node.type) {
+@@ -83,20 +98,68 @@ function walk(node: SchemaNode | undefined, value: unknown, path: string[], secr
+       if (!Array.isArray(value)) return value
+       return value.map((entry, index) => walk(node.inner, entry, [...path, String(index)], secrets))
+     }
++    case 'tuple': {
++      if (!Array.isArray(value)) return value
++      const list = node.list ?? []
++      const rebuilt = value.map((entry, index) => walk(list[index], entry, [...path, String(index)], secrets))
++      for (let index = value.length; index < list.length; index++) {
++        walk(list[index], undefined, [...path, String(index)], secrets)
++      }
++      return rebuilt
++    }
++    case 'union':
++    case 'intersect': {
++      let rebuilt = value
++      for (const child of node.list ?? []) {
++        // A wire reader cannot safely pick an untrusted branch. Walking all
++        // branches removes every possibly secret position instead.
++        rebuilt = walk(child, rebuilt, path, secrets)
++      }
++      return rebuilt
++    }
++    case 'transform':
++    case 'lazy':
++      return node.inner === undefined ? undefined : walk(node.inner, value, path, secrets)
+     default:
+-      // TODO(settings-wire-redaction): Fail closed instead — a secret reachable
+-      // only through a union, intersection, or transform is returned verbatim
+-      // here, with nothing recording that it was missed.
+-      return value
++      return SAFE_LEAF_TYPES.has(node.type ?? '') ? value : undefined
++  }
++}
++
++/** Collect every live node so its serialized default can be redacted by the same subtree. */
++function collectNodes(node: SchemaNode | undefined, collected: Map<number, SchemaNode>, visited: Set<SchemaNode>): void {
++  if (node === undefined || visited.has(node)) return
++  visited.add(node)
++  if (node.uid !== undefined) collected.set(node.uid, node)
++  for (const child of Object.values(node.dict ?? {})) collectNodes(child, collected, visited)
++  collectNodes(node.inner, collected, visited)
++  for (const child of node.list ?? []) collectNodes(child, collected, visited)
++}
++
++/**
++ * Remove secret values from every serialized schema default before exposing the
++ * envelope. Unknown schema nodes inherit the value walker's fail-closed rule.
++ */
++export function redactSchemaDefaults(schema: z<never>, serialized: unknown): unknown {
++  if (!isRecord(serialized) || !isRecord(serialized.refs)) return serialized
++  const redacted = structuredClone(serialized)
++  if (!isRecord(redacted.refs)) return redacted
++  const nodes = new Map<number, SchemaNode>()
++  collectNodes(schema, nodes, new Set())
++  for (const [uid, node] of nodes) {
++    const serializedNode = redacted.refs[String(uid)]
++    if (!isRecord(serializedNode) || !isRecord(serializedNode.meta) || !('default' in serializedNode.meta)) continue
++    const value = walk(node, serializedNode.meta.default, [], [])
++    if (value === undefined) Reflect.deleteProperty(serializedNode.meta, 'default')
++    else serializedNode.meta.default = value
+   }
++  return redacted
+ }
+ 
+ /**
+  * Remove every `role('secret')` field a schema declares from a value. The
+- * walker follows `object`, `dict`, and `array` containers; a secret must be
+- * declared directly on a field reachable through those containers (a secret
+- * buried inside a union branch or transform is not reachable and must not be
+- * modeled that way). The input is never mutated.
++ * walker follows standard schemastery containers, including tuple, union,
++ * intersection, transform, and resolved lazy nodes. An unknown node is
++ * omitted instead of risking an unredacted value. The input is never mutated.
+  * @param schema - live schemastery schema describing the value.
+  * @param value - the value to strip; `undefined` yields an empty record with
+  *   object-property secret slots still enumerated.
+diff --git a/packages/settings/settings/tests/redact.spec.ts b/packages/settings/settings/tests/redact.spec.ts
+index dbf02e8..dcc3e79 100644
+--- a/packages/settings/settings/tests/redact.spec.ts
++++ b/packages/settings/settings/tests/redact.spec.ts
+@@ -96,6 +96,43 @@ describe('redactSecrets', () => {
+     ])
+   })
+ 
++  it('walks composite schema nodes and omits an unsupported node value', () => {
++    const Composite = z.object({
++      tuple: z.tuple([z.object({ tupleToken: z.string().role('secret') }), z.string()]),
++      union: z.union([
++        z.object({ alphaToken: z.string().role('secret') }),
++        z.object({ betaToken: z.string().role('secret') }),
++      ]),
++      intersect: z.intersect([
++        z.object({ leftToken: z.string().role('secret') }),
++        z.object({ rightToken: z.string().role('secret') }),
++      ]),
++      transformed: z.transform(z.object({ transformedToken: z.string().role('secret') }), value => value),
++      opaque: z({ type: 'external-schema' }),
++    })
++    const { value, secrets } = redactSecrets(Composite as z<never>, {
++      tuple: [{ tupleToken: 'tuple-secret' }, 'kept'],
++      union: { alphaToken: 'alpha-secret', betaToken: 'beta-secret', visible: true },
++      intersect: { leftToken: 'left-secret', rightToken: 'right-secret', visible: true },
++      transformed: { transformedToken: 'transformed-secret', visible: true },
++      opaque: { value: 'must-not-cross-the-wire' },
++    })
++    expect(value).toEqual({
++      tuple: [{}, 'kept'],
++      union: { visible: true },
++      intersect: { visible: true },
++      transformed: { visible: true },
++    })
++    expect(secrets).toEqual([
++      { path: ['tuple', '0', 'tupleToken'], set: true },
++      { path: ['union', 'alphaToken'], set: true },
++      { path: ['union', 'betaToken'], set: true },
++      { path: ['intersect', 'leftToken'], set: true },
++      { path: ['intersect', 'rightToken'], set: true },
++      { path: ['transformed', 'transformedToken'], set: true },
++    ])
++  })
++
+   it('tolerates structural nodes missing their relation maps', () => {
+     expect(redactSecrets({ type: 'dict' } as never, { k: 'v' })).toEqual({ value: { k: 'v' }, secrets: [] })
+     expect(redactSecrets({ type: 'object' } as never, { k: 'v' })).toEqual({ value: { k: 'v' }, secrets: [] })
+@@ -165,4 +202,25 @@ describe('describe() layers and redaction', () => {
+     const [verbatim] = ctx.settings.describe()
+     expect(verbatim?.value).toEqual({ apiKey: 'user-key', baseURL: 'https://user' })
+   })
++
++  it('removes schema defaults declared at secret paths from wire descriptors', async () => {
++    const ctx = await boot()
++    const defaulted = z.object({
++      apiKey: z.string().role('secret').default('api-default-that-must-not-leak'),
++      baseURL: z.string().default('https://api.example'),
++      nested: z.object({ token: z.string().role('secret') }).default({ token: 'nested-default-that-must-not-leak' }),
++    })
++    ctx.settings.register(settingsNamespace('wire-defaults'), defaulted)
++    const raw = ctx.settings.describe()[0]!
++    expect(JSON.stringify(raw.schema)).toContain('api-default-that-must-not-leak')
++    expect(JSON.stringify(raw.schema)).toContain('nested-default-that-must-not-leak')
++    const [descriptor] = ctx.settings.describe({ redactSecrets: true })
++    expect(JSON.stringify(descriptor?.schema)).not.toContain('api-default-that-must-not-leak')
++    expect(JSON.stringify(descriptor?.schema)).not.toContain('nested-default-that-must-not-leak')
++    expect(descriptor?.value).toEqual({ baseURL: 'https://api.example', nested: {} })
++    expect(descriptor?.secrets).toEqual([
++      { path: ['apiKey'], set: true },
++      { path: ['nested', 'token'], set: true },
++    ])
++  })
+ })
+diff --git a/packages/settings/settings/tests/settings.spec.ts b/packages/settings/settings/tests/settings.spec.ts
+index 804f57b..37a95e1 100644
+--- a/packages/settings/settings/tests/settings.spec.ts
++++ b/packages/settings/settings/tests/settings.spec.ts
+@@ -167,6 +167,17 @@ describe('registration', () => {
+     expect(serialized.refs[String(serialized.uid)]?.type).toBe('object')
+   })
+ 
++  it('keeps Web-form exposure opt-in on the registered namespace', async () => {
++    const { ctx } = await boot()
++    ctx.settings.register(settingsNamespace('plugin-settings'), ThemeSchema, { exposeToWeb: 'form' })
++    ctx.settings.register(settingsNamespace('internal-settings'), ThemeSchema)
++    const descriptors = ctx.settings.describe()
++    expect(descriptors.find(descriptor => descriptor.ns === settingsNamespace('plugin-settings'))?.exposeToWeb)
++      .toBe('form')
++    expect(descriptors.find(descriptor => descriptor.ns === settingsNamespace('internal-settings'))?.exposeToWeb)
++      .toBeUndefined()
++  })
++
+   it('reads undefined for an unregistered namespace', async () => {
+     const { ctx } = await boot()
+     expect(ctx.settings.get(settingsNamespace('missing'))).toBeUndefined()
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 1490a0f..9347a72 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -2546,12 +2546,18 @@ importers:
+       '@deepseek-ai/dsh-api-remotes':
+         specifier: workspace:^
+         version: link:../../api/remotes
++      '@deepseek-ai/dsh-client-connection':
++        specifier: workspace:^
++        version: link:../connection
+       '@deepseek-ai/dsh-client-locale':
+         specifier: workspace:^
+         version: link:../locale
+       '@deepseek-ai/dsh-client-runtime':
+         specifier: workspace:^
+         version: link:../runtime
++      '@deepseek-ai/dsh-client-schema-form':
++        specifier: workspace:^
++        version: link:../schema-form
+       '@deepseek-ai/dsh-client-test-runtime':
+         specifier: workspace:^
+         version: link:../../test-support/client-runtime
+@@ -4909,6 +4915,12 @@ importers:
+ 
+   packages/host/plugin-inventory:
+     dependencies:
++      '@deepseek-ai/dsh-app-boot':
++        specifier: workspace:^
++        version: link:../../boot/app-boot
++      js-yaml:
++        specifier: ^4.2.0
++        version: 4.2.0
+       zod:
+         specifier: ^4.4.3
+         version: 4.4.3
+@@ -4922,12 +4934,18 @@ importers:
+       '@deepseek-ai/dsh-brand':
+         specifier: workspace:^
+         version: link:../../util/brand
++      '@deepseek-ai/dsh-home-paths':
++        specifier: workspace:^
++        version: link:../../util/home-paths
+       '@deepseek-ai/dsh-invariants':
+         specifier: workspace:^
+         version: link:../../runtime-diagnostics/invariants
+       '@deepseek-ai/dsh-typert-protocol':
+         specifier: workspace:^
+         version: link:../../typert/protocol
++      '@types/js-yaml':
++        specifier: ^4.0.9
++        version: 4.0.9
+ 
+   packages/host/webserver:
+     dependencies:
+@@ -12953,8 +12971,8 @@ packages:
+   mdn-data@2.27.1:
+     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
+ 
+-  media-typer@1.1.0:
+-    resolution: {integrity: sha512-aisnrDP4GNe06UcKFnV5bfMNPBUw4jsLGaWwWfnH3v02GnBuXX2MCVn5RbrWo0j3pczUilYblq7fQ7Nw2t5XKw==}
++  media-typer@1.1.1:
++    resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
+     engines: {node: '>= 0.8'}
+ 
+   merge-descriptors@2.0.0:
+@@ -18266,7 +18284,7 @@ snapshots:
+ 
+   mdn-data@2.27.1: {}
+ 
+-  media-typer@1.1.0: {}
++  media-typer@1.1.1: {}
+ 
+   merge-descriptors@2.0.0: {}
+ 
+@@ -19371,7 +19389,7 @@ snapshots:
+   type-is@2.1.0:
+     dependencies:
+       content-type: 2.0.0
+-      media-typer: 1.1.0
++      media-typer: 1.1.1
+       mime-types: 3.0.2
+ 
+   typebox@1.1.38: {}
+diff --git a/tsconfig.host.json b/tsconfig.host.json
+index 4590362..aaa66b1 100644
+--- a/tsconfig.host.json
++++ b/tsconfig.host.json
+@@ -30,7 +30,6 @@
+     "apps/web/tests/models-settings.e2e.ts",
+     "apps/web/tests/onboarding-deepseek-config.e2e.ts",
+     "apps/web/tests/onboarding-usable-provider.e2e.ts",
+-    "apps/web/tests/remote-welcome.e2e.ts",
+     "apps/web/tests/workspace-management.e2e.ts",
+     "apps/web/tests/replay-round-trip.e2e.ts",
+     "apps/web/tests/hmr-live.e2e.ts",
+diff --git a/vitest.config.ts b/vitest.config.ts
+index c453145..b8b5be6 100644
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -244,7 +244,6 @@ export default defineConfig({
+         'packages/test-support/client-runtime/src/translate.ts',
+         'packages/client/ui-primitives/src/JsonTree.tsx',
+         'packages/client/ui-settings-models/src/client/DeepSeekOnboardingDialog.tsx',
+-        'packages/client/ui-settings-models/src/client/welcome-store.ts',
+         'packages/extensions/*/src/**/*.ts',
+         'packages/extensions/*/src/**/*.tsx',
+         // Typert generator: correctness is pinned by its fixture suites and
