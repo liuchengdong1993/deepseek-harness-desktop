@@ -1,0 +1,83 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.3",
+  "description": "macOS desktop app for DeepSeek Harness: wraps the web UI, keeps the GitHub source updated, and manages community plugins.",
+  "main": "main.js",
+  "homepage": "https://github.com/deepseek-ai/deepseek-harness",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "DSH_DESKTOP_SMOKE=1 electron .",
+    "icon": "node scripts/gen-icon.js && bash scripts/build-icns.sh",
+    "dist": "electron-builder --mac dmg"
+  },
+  "author": "dsh-desktop",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.deepseek.desktop",
+    "productName": "DeepSeek Desktop",
+    "artifactName": "DeepSeek-Desktop-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-shell.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "agent/**/*",
+      "runtime/**/*",
+      "assets/trayTemplate.png",
+      "harness.tar"
+    ],
+    "asarUnpack": [
+      "agent/**/*",
+      "runtime/**/*",
+      "assets/trayTemplate.png",
+      "harness.tar"
+    ],
+    "electronDist": "node_modules/electron/dist",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YUANIMAL",
+        "repo": "deepseek-harness-desktop"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "notarize": true
+    },
+    "dmg": {
+      "title": "DeepSeek Desktop ${version}",
+      "icon": "assets/icon.icns",
+      "contents": [
+        {
+          "x": 140,
+          "y": 200
+        },
+        {
+          "x": 420,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}
