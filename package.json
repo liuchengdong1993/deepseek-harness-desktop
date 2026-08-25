@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "DeepSeek Harness 的 macOS 桌面版：承载网页界面、管理后端与社区插件。",
   "main": "main.js",
   "homepage": "https://github.com/deepseek-ai/deepseek-harness",
