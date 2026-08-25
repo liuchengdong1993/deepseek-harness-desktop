@@ -47,7 +47,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "YUANIMAL",
+        "owner": "liuchengdong1993",
         "repo": "deepseek-harness-desktop"
       }
     ],

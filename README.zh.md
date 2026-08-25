@@ -4,7 +4,7 @@
 
 一个用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的原生 **macOS 桌面应用**。它**开箱即用**——harness 源码和 Node.js 运行时都已内置，无需再装任何东西。
 
-[![Latest release](https://img.shields.io/github/v/release/YUANIMAL/deepseek-harness-desktop?label=release)](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/liuchengdong1993/deepseek-harness-desktop?label=release)](https://github.com/liuchengdong1993/deepseek-harness-desktop/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## 功能
@@ -18,7 +18,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest) 下载最新的 `DeepSeek-Harness-<version>-arm64.dmg`。
+1. 从 [Releases](https://github.com/liuchengdong1993/deepseek-harness-desktop/releases/latest) 下载最新的 `DeepSeek-Harness-<version>-arm64.dmg`。
 2. 打开 `.dmg`，把 **DeepSeek Harness** 拖进**应用程序**。
 3. 首次启动请**右键 → 打开**（该版本未签名，见[签名与公证](#签名与公证)）。
 4. 在**设置**里填入你的 DeepSeek API Key。

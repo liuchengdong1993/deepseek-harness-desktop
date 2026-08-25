@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 A native **macOS desktop app** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It is **self-contained** — the harness source and a Node.js runtime are bundled inside — so it runs out of the box with nothing else to install.
 
-[![Latest release](https://img.shields.io/github/v/release/YUANIMAL/deepseek-harness-desktop?label=release)](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/liuchengdong1993/deepseek-harness-desktop?label=release)](https://github.com/liuchengdong1993/deepseek-harness-desktop/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Features
@@ -18,7 +18,7 @@ A native **macOS desktop app** for [DeepSeek Harness](https://github.com/deepsee
 
 ## Install
 
-1. Download the latest `DeepSeek-Harness-<version>-arm64.dmg` from [Releases](https://github.com/YUANIMAL/deepseek-harness-desktop/releases/latest).
+1. Download the latest `DeepSeek-Harness-<version>-arm64.dmg` from [Releases](https://github.com/liuchengdong1993/deepseek-harness-desktop/releases/latest).
 2. Open the `.dmg` and drag **DeepSeek Harness** into **Applications**.
 3. On first launch, **right-click → Open** (the build is unsigned; see [Signing](#signing--notarization)).
 4. Enter your DeepSeek API key in **Settings**.
