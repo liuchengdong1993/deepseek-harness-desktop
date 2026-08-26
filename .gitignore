@@ -1,0 +1,7 @@
+node_modules/
+dist/
+harness.tar
+runtime/
+app.asar*
+*.log
+.DS_Store

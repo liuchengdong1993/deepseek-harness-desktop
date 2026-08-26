@@ -1,0 +1,66 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.6",
+  "description": "DeepSeek Harness 的 macOS 桌面版：承载网页界面、管理后端与社区插件。",
+  "main": "main.js",
+  "homepage": "https://github.com/deepseek-ai/deepseek-harness",
+  "author": "dsh-desktop",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^26.0.12"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac --arm64"
+  },
+  "build": {
+    "appId": "com.deepseek.desktop",
+    "productName": "DeepSeek Harness",
+    "asar": true,
+    "npmRebuild": false,
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "lib/**/*",
+      "assets/**/*",
+      "harness.bundle.json",
+      "!harness.tar"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "app.asar.unpacked/runtime"
+      },
+      {
+        "from": "harness.tar",
+        "to": "app.asar.unpacked/harness.tar"
+      }
+    ],
+    "afterPack": "scripts/afterpack.cjs",
+    "mac": {
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "liuchengdong1993",
+        "repo": "deepseek-harness-desktop"
+      }
+    ]
+  }
+}

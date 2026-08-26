@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "harnessRevision": "47f943859bef60e4160492346772ded9b24f765a",
+  "archive": {
+    "bytes": 1459983872,
+    "sha256": "808256d57409c2c36822a0e7d0ca22b3eb40aaa281e96e34e743b77e7f12c55d"
+  },
+  "patches": {
+    "harness-plugin-lifecycle.patch": "81493c234b461e74ad3fbadea4b1899f01c4ce8ff9c29d60c9abbe76ff790023",
+    "harness-zh-permission-presets.patch": "e946baa7ea30156a5026a1a9a39b82f254168a0f7944b6424310a9308c4c9386",
+    "remove-welcome-notice.patch": "d3db6b8dee6d63947bbb21873b6ea43ba4e2a40accafb06badad31ca2ef05c98"
+  }
+}
