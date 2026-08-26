@@ -171,7 +171,7 @@ jobs:
           tar -xzf "$PNPM_TARBALL" --strip-components=1 -C runtime/pnpm
           rm -f "$PNPM_TARBALL"
           test -f runtime/pnpm/bin/pnpm.cjs
-          test -f runtime/pnpm/dist/pnpm.cjs
+          test -f runtime/pnpm/dist/pnpm.mjs
           test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = "$PNPM_VERSION"
 
       - name: Package & publish DMG (signed & notarized)
