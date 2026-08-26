@@ -48,6 +48,7 @@
     "afterPack": "scripts/afterpack.cjs",
     "mac": {
       "identity": null,
+      "icon": "assets/icon.icns",
       "target": [
         {
           "target": "dmg",
