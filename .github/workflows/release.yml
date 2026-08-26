@@ -161,15 +161,18 @@ jobs:
 
       - name: Bundle pnpm 11.7.0 runtime (runtime/pnpm)
         run: |
-          # pnpm's entry point imports files in its sibling dist/ directory,
-          # so package the complete npm artifact rather than only bin/pnpm.cjs.
-          PNPM_TARBALL="$(npm pack --silent --ignore-scripts pnpm@11.7.0)"
+          # pnpm 的入口会 import 同级 dist/ 目录，因此打包完整 npm 产物而非只取 bin/pnpm.cjs。
+          # 用 registry 直链取 tarball（文件名确定），规避 npm pack 输出在部分 npm 版本下
+          # 被 --silent 吞掉、导致 PNPM_TARBALL 为空而 tar 失败的问题。
+          PNPM_VERSION="11.7.0"
+          PNPM_TARBALL="pnpm-${PNPM_VERSION}.tgz"
+          curl -fsSL -o "$PNPM_TARBALL" "https://registry.npmjs.org/pnpm/-/pnpm-${PNPM_VERSION}.tgz"
           mkdir -p runtime/pnpm
           tar -xzf "$PNPM_TARBALL" --strip-components=1 -C runtime/pnpm
           rm -f "$PNPM_TARBALL"
           test -f runtime/pnpm/bin/pnpm.cjs
           test -f runtime/pnpm/dist/pnpm.cjs
-          test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = '11.7.0'
+          test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = "$PNPM_VERSION"
 
       - name: Package & publish DMG (signed & notarized)
         if: steps.signing.outputs.enabled == 'true'
