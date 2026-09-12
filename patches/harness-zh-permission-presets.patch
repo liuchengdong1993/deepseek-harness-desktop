@@ -1,80 +1,287 @@
-diff --git a/packages/client/ui-permission-presets/src/client/PermissionRow.tsx b/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
-index ae8c8ba..4f19cf3 100644
---- a/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
-+++ b/packages/client/ui-permission-presets/src/client/PermissionRow.tsx
-@@ -12,7 +12,7 @@ import {
- } from '@deepseek-ai/dsh-client-ui-primitives'
- import type { PermissionSettingsState } from './settings-store.ts'
- import type { PermissionSettingsKey } from './locales.ts'
--import { FULL_ACCESS_PRESET } from './presentation.ts'
-+import { displayPermissionPreset, FULL_ACCESS_PRESET } from './presentation.ts'
- import css from './PermissionRow.module.css'
+diff --git a/apps/web/tests/access-confirmation.e2e.ts b/apps/web/tests/access-confirmation.e2e.ts
+index cd64d981..6ecb4501 100644
+--- a/apps/web/tests/access-confirmation.e2e.ts
++++ b/apps/web/tests/access-confirmation.e2e.ts
+@@ -50,13 +50,13 @@ describe('web e2e: Full access confirmation', () => {
+     const access = page.locator('button[aria-label^="访问模式"]').first()
+     await access.waitFor({ timeout: 10_000 })
  
- /** Registration-side business face for the host-backed preference. */
-@@ -58,7 +58,7 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
-   if (state.status === 'unavailable') return null
-   const selected = state.options.find(option => option.id === state.currentValue)
-   const busy = state.status === 'loading' || state.status === 'saving' || confirmingFullAccess
--  const label = selected?.label
-+  const label = (selected === undefined ? undefined : displayPermissionPreset(selected.id, selected.label, t))
-     ?? (busy ? t('loading') : t('unavailable'))
-   const description: string = state.error ?? t('description')
+-    expect(await access.getAttribute('aria-label')).toBe('访问模式，当前：工作区内修改')
++    expect(await access.getAttribute('aria-label')).toBe('访问模式，当前：工作区写入')
  
-@@ -72,7 +72,10 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
-         <Menu
-           open={open}
-           onClose={() => { setOpen(false) }}
--          items={state.options.map(option => ({ id: option.id, label: option.label }))}
-+          items={state.options.map(option => ({
-+            id: option.id,
-+            label: displayPermissionPreset(option.id, option.label, t),
-+          }))}
-           selectedId={state.currentValue}
-           onSelect={(id) => {
-             setOpen(false)
-diff --git a/packages/client/ui-permission-presets/src/client/index.ts b/packages/client/ui-permission-presets/src/client/index.ts
-index aec82bf..72a5aa7 100644
---- a/packages/client/ui-permission-presets/src/client/index.ts
-+++ b/packages/client/ui-permission-presets/src/client/index.ts
-@@ -58,7 +58,7 @@ function optionsOf(value: PermissionSelect, t: (key: string) => string): SelectO
-     .filter(option => option.value !== 'custom')
-     .map(option => ({
-       id: option.value,
--      label: displayPermissionPreset(option.value, option.name),
-+      label: displayPermissionPreset(option.value, option.name, t),
-       ...(option.description !== undefined ? { detail: option.description } : {}),
-       ...(option.value === value.currentValue ? { active: true } : {}),
-       ...(option.value === FULL_ACCESS_PRESET
-@@ -89,6 +89,9 @@ export function apply(ctx: ClientContext): void {
-   ctx.effect(() => {
-     const disposers = [
-       ctx.locale.register(ACCESS_NS, 'zh', {
-+        'preset.readOnly': accessZh['preset.readOnly'],
-+        'preset.workspaceWrite': accessZh['preset.workspaceWrite'],
-+        'preset.fullAccess': accessZh['preset.fullAccess'],
-         'confirm.title': accessZh['confirm.title'],
-         'confirm.description': accessZh['confirm.description'],
-         'confirm.acknowledge': accessZh['confirm.acknowledge'],
-@@ -96,6 +99,9 @@ export function apply(ctx: ClientContext): void {
-         'confirm.enable': accessZh['confirm.enable'],
-       }),
-       ctx.locale.register(ACCESS_NS, 'en', {
-+        'preset.readOnly': accessEn['preset.readOnly'],
-+        'preset.workspaceWrite': accessEn['preset.workspaceWrite'],
-+        'preset.fullAccess': accessEn['preset.fullAccess'],
-         'confirm.title': accessEn['confirm.title'],
-         'confirm.description': accessEn['confirm.description'],
-         'confirm.acknowledge': accessEn['confirm.acknowledge'],
+     await access.click()
+-    await page.getByRole('menuitem', { name: '完全权限' }).click()
+-    const dialog = page.getByRole('dialog', { name: '确认启用完全权限？' })
++    await page.getByRole('menuitem', { name: '完全访问' }).click()
++    const dialog = page.getByRole('dialog', { name: '确认启用完全访问？' })
+     await dialog.waitFor({ timeout: 10_000 })
+-    const enable = dialog.getByRole('button', { name: '启用完全权限' })
++    const enable = dialog.getByRole('button', { name: '启用完全访问' })
+     expect(await enable.isDisabled()).toBe(true)
+ 
+     // The modal is in this page's body (not a native/new window) and escapes
+@@ -69,7 +69,7 @@ describe('web e2e: Full access confirmation', () => {
+     expect(await enable.isEnabled()).toBe(true)
+     await enable.click()
+     await expect.poll(() => access.getAttribute('aria-label'), { timeout: 10_000 })
+-      .toBe('访问模式，当前：完全权限')
++      .toBe('访问模式，当前：完全访问')
+     expect(await dialog.count()).toBe(0)
+     expect(tripwire.pageErrors).toEqual([])
+   }, 60_000)
+diff --git a/apps/web/tests/expected/access-confirmation/ui.expected.md b/apps/web/tests/expected/access-confirmation/ui.expected.md
+index d554a96a..e768805a 100644
+--- a/apps/web/tests/expected/access-confirmation/ui.expected.md
++++ b/apps/web/tests/expected/access-confirmation/ui.expected.md
+@@ -1,10 +1,10 @@
+-- dialog "确认启用完全权限？":
+-  - heading "确认启用完全权限？" [level=2]
++- dialog "确认启用完全访问？":
++  - heading "确认启用完全访问？" [level=2]
+   - button "关闭":
+     - img
+   - img
+-  - paragraph: 启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。
++  - paragraph: 启用完全访问后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。
+   - checkbox "我已了解风险，并愿意继续"
+   - text: 我已了解风险，并愿意继续
+   - button "取消"
+-  - button "启用完全权限" [disabled]
++  - button "启用完全访问" [disabled]
+diff --git a/apps/web/tests/expected/settings-chrome/dialog.expected.md b/apps/web/tests/expected/settings-chrome/dialog.expected.md
+index f80893bf..c2c26c00 100644
+--- a/apps/web/tests/expected/settings-chrome/dialog.expected.md
++++ b/apps/web/tests/expected/settings-chrome/dialog.expected.md
+@@ -18,8 +18,8 @@
+     - img
+     - text: 关闭
+   - text: 权限 选择新会话的默认权限模式
+-  - button "工作区内修改":
+-    - text: 工作区内修改
++  - button "工作区写入":
++    - text: 工作区写入
+     - img
+   - text: 语言
+   - button "中文":
+diff --git a/apps/web/tests/settings-chrome.e2e.ts b/apps/web/tests/settings-chrome.e2e.ts
+index 09e24aa7..9287e39e 100644
+--- a/apps/web/tests/settings-chrome.e2e.ts
++++ b/apps/web/tests/settings-chrome.e2e.ts
+@@ -63,7 +63,7 @@ describe('web e2e: settings modal and General preferences', () => {
+     expect(await trigger.getAttribute('aria-expanded')).toBe('true')
+     // General is active by default; Permission, Language and Appearance are functional.
+     expect(await dialog.getByRole('button', { name: '通用设置' }).getAttribute('aria-current')).toBe('true')
+-    await dialog.getByRole('button', { name: '工作区内修改' }).waitFor({ timeout: 10_000 })
++    await dialog.getByRole('button', { name: '工作区写入' }).waitFor({ timeout: 10_000 })
+     await expect.poll(() => dialog.getByText('语言', { exact: true }).count(), { timeout: 5_000 }).toBe(1)
+     await expect.poll(() => dialog.getByText('外观', { exact: true }).count(), { timeout: 5_000 }).toBe(1)
+     const openDocument = dialog.getByRole('button', { name: '打开配置文件' })
+@@ -181,12 +181,12 @@ describe('web e2e: settings modal and General preferences', () => {
+     await page.getByRole('button', { name: '设置', exact: true }).click()
+     const dialog = page.getByRole('dialog', { name: '设置' })
+     await dialog.waitFor({ timeout: 10_000 })
+-    const selector = dialog.getByRole('button', { name: '工作区内修改' })
++    const selector = dialog.getByRole('button', { name: '工作区写入' })
+     await selector.waitFor({ timeout: 10_000 })
+     await expect.poll(() => selector.isEnabled(), { timeout: 5_000 }).toBe(true)
+     await selector.click()
+-    await page.getByRole('menuitem', { name: '仅可查看' }).click()
+-    await dialog.getByRole('button', { name: '仅可查看' }).waitFor({ timeout: 10_000 })
++    await page.getByRole('menuitem', { name: '只读' }).click()
++    await dialog.getByRole('button', { name: '只读' }).waitFor({ timeout: 10_000 })
+ 
+     const document = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+     expect(document).toContain('permission:')
+@@ -201,14 +201,14 @@ describe('web e2e: settings modal and General preferences', () => {
+       ['approval/policy', { policy: 'ask' }],
+     ])
+ 
+-    await dialog.getByRole('button', { name: '仅可查看' }).click()
+-    await page.getByRole('menuitem', { name: '完全权限' }).click()
+-    const confirmation = page.getByRole('dialog', { name: '确认启用完全权限？' })
+-    const enable = confirmation.getByRole('button', { name: '启用完全权限' })
++    await dialog.getByRole('button', { name: '只读' }).click()
++    await page.getByRole('menuitem', { name: '完全访问' }).click()
++    const confirmation = page.getByRole('dialog', { name: '确认启用完全访问？' })
++    const enable = confirmation.getByRole('button', { name: '启用完全访问' })
+     expect(await enable.isDisabled()).toBe(true)
+     await confirmation.getByRole('checkbox').click()
+     await enable.click()
+-    await dialog.getByRole('button', { name: '完全权限' }).waitFor({ timeout: 10_000 })
++    await dialog.getByRole('button', { name: '完全访问' }).waitFor({ timeout: 10_000 })
+     const confirmedDocument = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+     expect(confirmedDocument).toContain('defaultPreset: danger-full-access')
+     const confirmed = scaffold.ctx.sessions.create(SessionId('settings-permission-confirmed'))
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index 4aeb7559..4943bef8 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -68,14 +68,14 @@ export const zh = {
+   'settings.enter.description': '智能体运行时 Enter 键和发送按钮的行为；Cmd/Ctrl+Enter 使用另一行为',
+   'settings.enter.queue': '排队发送',
+   'settings.enter.steer': '插话发送',
+-  'access.preset.readOnly': '仅可查看',
+-  'access.preset.workspaceWrite': '工作区内修改',
+-  'access.preset.fullAccess': '完全权限',
+-  'access.confirm.title': '确认启用完全权限？',
+-  'access.confirm.description': '启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
++  'access.preset.readOnly': '只读',
++  'access.preset.workspaceWrite': '工作区写入',
++  'access.preset.fullAccess': '完全访问',
++  'access.confirm.title': '确认启用完全访问？',
++  'access.confirm.description': '启用完全访问后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+   'access.confirm.acknowledge': '我已了解风险，并愿意继续',
+   'access.confirm.cancel': '取消',
+-  'access.confirm.enable': '启用完全权限',
++  'access.confirm.enable': '启用完全访问',
+   'hero.headline': '探索未至之境',
+   'hero.preview': '预览版',
+   'hero.chooseWorkspace': '选择工作区',
+diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+index d2a3064a..8af7e60d 100644
+--- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+@@ -1534,16 +1534,16 @@ describe('command launcher chrome and control seats', () => {
+     const { view } = bench({ permissions, command })
+     const trigger = view.getByLabelText(/^访问模式/) as HTMLButtonElement
+     // Product-label display is presentation only; the menu ids stay machine names.
+-    expect(trigger.textContent).toBe('仅可查看')
++    expect(trigger.textContent).toBe('只读')
+     expect([...trigger.querySelectorAll('svg')]
+       .every(icon => icon.closest('[aria-hidden="true"]') !== null)).toBe(true)
+     fireEvent.click(trigger)
+     const items = view.getAllByRole('menuitem')
+-    expect(items.map(o => o.textContent)).toEqual(['仅可查看', '工作区内修改', '完全权限'])
++    expect(items.map(o => o.textContent)).toEqual(['只读', '工作区写入', '完全访问'])
+     fireEvent.click(items[1]!)
+     // Optimistic pick + disable until admission resolves (command stub resolves true).
+     const busy = view.getByLabelText(/^访问模式/) as HTMLButtonElement
+-    expect(busy.textContent).toBe('工作区内修改')
++    expect(busy.textContent).toBe('工作区写入')
+     expect(busy.disabled).toBe(true)
+     expect(command).toHaveBeenCalledWith('/permission workspace-write')
+     await act(async () => {})
+@@ -1580,11 +1580,11 @@ describe('command launcher chrome and control seats', () => {
+     }
+     const { view } = bench({ permissions, command })
+     fireEvent.click(view.getByLabelText(/^访问模式/))
+-    fireEvent.click(view.getByRole('menuitem', { name: '完全权限' }))
++    fireEvent.click(view.getByRole('menuitem', { name: '完全访问' }))
+ 
+     expect(command).not.toHaveBeenCalled()
+-    expect(view.getByRole('dialog', { name: '确认启用完全权限？' })).toBeTruthy()
+-    const enable = view.getByRole('button', { name: '启用完全权限' }) as HTMLButtonElement
++    expect(view.getByRole('dialog', { name: '确认启用完全访问？' })).toBeTruthy()
++    const enable = view.getByRole('button', { name: '启用完全访问' }) as HTMLButtonElement
+     expect(enable.disabled).toBe(true)
+ 
+     fireEvent.click(view.getByRole('checkbox', { name: '我已了解风险，并愿意继续' }))
+@@ -1594,7 +1594,7 @@ describe('command launcher chrome and control seats', () => {
+     expect(command).toHaveBeenCalledOnce()
+     expect(command).toHaveBeenCalledWith('/permission danger-full-access')
+     expect(view.queryByRole('dialog')).toBeNull()
+-    expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).textContent).toBe('完全权限')
++    expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).textContent).toBe('完全访问')
+     await act(async () => {})
+   })
+ 
+@@ -1610,18 +1610,18 @@ describe('command launcher chrome and control seats', () => {
+     const { view } = bench({ permissions, command })
+     const openConfirmation = () => {
+       fireEvent.click(view.getByLabelText(/^访问模式/))
+-      fireEvent.click(view.getByRole('menuitem', { name: '完全权限' }))
++      fireEvent.click(view.getByRole('menuitem', { name: '完全访问' }))
+     }
+ 
+     openConfirmation()
+     fireEvent.click(view.getByRole('checkbox'))
+     fireEvent.click(view.getByRole('button', { name: '取消' }))
+     expect(command).not.toHaveBeenCalled()
+-    expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).textContent).toBe('工作区内修改')
++    expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).textContent).toBe('工作区写入')
+ 
+     openConfirmation()
+     expect((view.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+-    expect((view.getByRole('button', { name: '启用完全权限' }) as HTMLButtonElement).disabled).toBe(true)
++    expect((view.getByRole('button', { name: '启用完全访问' }) as HTMLButtonElement).disabled).toBe(true)
+   })
+ 
+   it('revokes an open full access confirmation when the task locks', () => {
+@@ -1635,7 +1635,7 @@ describe('command launcher chrome and control seats', () => {
+     }
+     const { view, session } = bench({ permissions, command })
+     fireEvent.click(view.getByLabelText(/^访问模式/))
+-    fireEvent.click(view.getByRole('menuitem', { name: '完全权限' }))
++    fireEvent.click(view.getByRole('menuitem', { name: '完全访问' }))
+     fireEvent.click(view.getByRole('checkbox'))
+     act(() => { session.set(snapshotOf({ removed: true })) })
+     expect(view.queryByRole('dialog')).toBeNull()
+@@ -1653,7 +1653,7 @@ describe('command launcher chrome and control seats', () => {
+     }
+     const { view, props } = bench({ permissions, command })
+     fireEvent.click(view.getByLabelText(/^访问模式/))
+-    fireEvent.click(view.getByRole('menuitem', { name: '完全权限' }))
++    fireEvent.click(view.getByRole('menuitem', { name: '完全访问' }))
+     fireEvent.click(view.getByRole('checkbox'))
+     view.rerender(<InputBar {...props} sessionId={'s2' as SessionId} />)
+     expect(view.queryByRole('dialog')).toBeNull()
+diff --git a/packages/client/ui-permission-presets/README.md b/packages/client/ui-permission-presets/README.md
+index d8169e51..5b2854c0 100644
+--- a/packages/client/ui-permission-presets/README.md
++++ b/packages/client/ui-permission-presets/README.md
+@@ -29,7 +29,7 @@ Mount this plugin alongside the settings and commands packages; the permission r
+ 
+ ### The picker
+ 
+-A pick submits the `/permission <preset>` command line. The argued path (`/permission <preset>` typed directly) still switches directly; the decoration replaces only the bare invocation. The built-in labels are `Read Only`, `Workspace Write`, and `Full access` in English and `仅可查看`, `工作区内修改`, and `完全权限` in Chinese; `custom` is display state, never a target.
++A pick submits the `/permission <preset>` command line. The argued path (`/permission <preset>` typed directly) still switches directly; the decoration replaces only the bare invocation. The built-in labels are `Read Only`, `Workspace Write`, and `Full access` in English and `只读`, `工作区写入`, and `完全访问` in Chinese; `custom` is display state, never a target.
+ 
+ ### The Settings row
+ 
+diff --git a/packages/client/ui-permission-presets/README.zh.md b/packages/client/ui-permission-presets/README.zh.md
+index f9b27963..50173a39 100644
+--- a/packages/client/ui-permission-presets/README.zh.md
++++ b/packages/client/ui-permission-presets/README.zh.md
+@@ -9,7 +9,7 @@ kind: "package-reference"
+ 
+ ## 概述
+ 
+-使用本包可在 Web GUI 中为未来会话选择权限预设，或切换当前会话的权限预设。通用设置行只更改之后创建会话所用的默认值；`/permission` 选择器只更改当前会话，并标记其当前预设。内置预设使用本地化标签；显式宿主标签保持原样，未知的 kebab-case 名称显示为 Title Case。完全权限始终需要显式确认风险。两个表面都只在宿主推送更改后的权限状态后确认变更。
++使用本包可在 Web GUI 中为未来会话选择权限预设，或切换当前会话的权限预设。通用设置行只更改之后创建会话所用的默认值；`/permission` 选择器只更改当前会话，并标记其当前预设。内置预设使用本地化标签；显式宿主标签保持原样，未知的 kebab-case 名称显示为 Title Case。完全访问始终需要显式确认风险。两个表面都只在宿主推送更改后的权限状态后确认变更。
+ 
+ ## 目录
+ 
+@@ -29,7 +29,7 @@ kind: "package-reference"
+ 
+ ### 选择器
+ 
+-选中即提交 `/permission <preset>` 命令行。带参路径（直接键入 `/permission <preset>`）仍直接切换；装饰只替换裸调用。内置标签在英文界面中是 `Read Only`、`Workspace Write` 和 `Full access`，在中文界面中是「仅可查看」「工作区内修改」和「完全权限」；`custom` 只是显示状态，绝非目标。
++选中即提交 `/permission <preset>` 命令行。带参路径（直接键入 `/permission <preset>`）仍直接切换；装饰只替换裸调用。内置标签在英文界面中是 `Read Only`、`Workspace Write` 和 `Full access`，在中文界面中是「只读」「工作区写入」和「完全访问」；`custom` 只是显示状态，绝非目标。
+ 
+ ### 设置行
+ 
+@@ -43,7 +43,7 @@ kind: "package-reference"
+ <details>
+ <summary>实现细节——点击展开</summary>
+ 
+-通用行经 `ctx.settingsScope` 读取显式暴露的 `permission` Settings 描述符，并携带描述符 revision 写入一条 `settings.mutate` 路径操作；其 observable 经槽位系统的 `hooks` 格传递，因此 React 钩子绑定归渲染器，推送失效通知会重新获取描述符。该值只在之后创建会话时读取。当前会话表面是挂在宿主 `/permission` 命令上的 popupSelect 装饰（`ctx.commandUi.decorate`）：宿主命令保留斜杠菜单行、带参路径与持久生命周期记账，装饰只把裸调用替换为选择器。选项与 active 标记读取会话的 `permissions` 投影——与 composer chip 渲染的同一份宿主计算 select。完全权限选项携带 `confirmation` 载荷，由共享弹窗外壳渲染为页内风险门。
++通用行经 `ctx.settingsScope` 读取显式暴露的 `permission` Settings 描述符，并携带描述符 revision 写入一条 `settings.mutate` 路径操作；其 observable 经槽位系统的 `hooks` 格传递，因此 React 钩子绑定归渲染器，推送失效通知会重新获取描述符。该值只在之后创建会话时读取。当前会话表面是挂在宿主 `/permission` 命令上的 popupSelect 装饰（`ctx.commandUi.decorate`）：宿主命令保留斜杠菜单行、带参路径与持久生命周期记账，装饰只把裸调用替换为选择器。选项与 active 标记读取会话的 `permissions` 投影——与 composer chip 渲染的同一份宿主计算 select。完全访问选项携带 `confirmation` 载荷，由共享弹窗外壳渲染为页内风险门。
+ 
+ </details>
+ 
 diff --git a/packages/client/ui-permission-presets/src/client/locales.ts b/packages/client/ui-permission-presets/src/client/locales.ts
-index 3920a7a..6c70cd0 100644
+index 43cd7695..6c70cd04 100644
 --- a/packages/client/ui-permission-presets/src/client/locales.ts
 +++ b/packages/client/ui-permission-presets/src/client/locales.ts
-@@ -6,11 +6,14 @@ export const zh = {
+@@ -6,14 +6,14 @@ export const zh = {
    'description': '选择新会话的默认权限模式',
    'loading': '加载中',
    'unavailable': '不可用',
--  'confirm.title': '确认启用 Full access？',
--  'confirm.description': '启用 Full access 后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。',
+-  'preset.readOnly': '仅可查看',
+-  'preset.workspaceWrite': '工作区内修改',
+-  'preset.fullAccess': '完全权限',
+-  'confirm.title': '确认启用完全权限？',
+-  'confirm.description': '启用完全权限后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。',
 +  'preset.readOnly': '只读',
 +  'preset.workspaceWrite': '工作区写入',
 +  'preset.fullAccess': '完全访问',
@@ -82,27 +289,20 @@ index 3920a7a..6c70cd0 100644
 +  'confirm.description': '启用完全访问后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。',
    'confirm.acknowledge': '我已了解风险，并愿意继续',
    'confirm.cancel': '取消',
--  'confirm.enable': '启用 Full access',
+-  'confirm.enable': '启用完全权限',
 +  'confirm.enable': '启用完全访问',
  } satisfies Record<string, string>
  
  /** The settings.permission namespace key union. */
-@@ -22,6 +25,9 @@ export const en = {
-   'description': 'Choose the default permission mode for new sessions',
-   'loading': 'Loading',
-   'unavailable': 'Unavailable',
-+  'preset.readOnly': 'Read Only',
-+  'preset.workspaceWrite': 'Workspace Write',
-+  'preset.fullAccess': 'Full access',
-   'confirm.title': 'Enable Full access?',
-   'confirm.description': 'Full access lets new sessions reduce confirmation steps and perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust subsequent tasks.',
-   'confirm.acknowledge': 'I understand the risks and want to continue',
-@@ -31,11 +37,14 @@ export const en = {
+@@ -37,14 +37,14 @@ export const en = {
  
  /** Simplified Chinese dictionary for the current-session popup gate. */
  export const accessZh = {
--  'confirm.title': '确认启用 Full access？',
--  'confirm.description': '启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+-  'preset.readOnly': '仅可查看',
+-  'preset.workspaceWrite': '工作区内修改',
+-  'preset.fullAccess': '完全权限',
+-  'confirm.title': '确认启用完全权限？',
+-  'confirm.description': '启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
 +  'preset.readOnly': '只读',
 +  'preset.workspaceWrite': '工作区写入',
 +  'preset.fullAccess': '完全访问',
@@ -110,116 +310,112 @@ index 3920a7a..6c70cd0 100644
 +  'confirm.description': '启用完全访问后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
    'confirm.acknowledge': '我已了解风险，并愿意继续',
    'confirm.cancel': '取消',
--  'confirm.enable': '启用 Full access',
+-  'confirm.enable': '启用完全权限',
 +  'confirm.enable': '启用完全访问',
  } satisfies Record<string, string>
  
  /** Current-session popup-gate key union. */
-@@ -43,6 +52,9 @@ export type PermissionAccessKey = keyof typeof accessZh
- 
- /** English dictionary for the current-session popup gate. */
- export const accessEn = {
-+  'preset.readOnly': 'Read Only',
-+  'preset.workspaceWrite': 'Workspace Write',
-+  'preset.fullAccess': 'Full access',
-   'confirm.title': 'Enable Full access?',
-   'confirm.description': 'Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.',
-   'confirm.acknowledge': 'I understand the risks and want to continue',
-diff --git a/packages/client/ui-permission-presets/src/client/presentation.ts b/packages/client/ui-permission-presets/src/client/presentation.ts
-index ab1b9a5..409750b 100644
---- a/packages/client/ui-permission-presets/src/client/presentation.ts
-+++ b/packages/client/ui-permission-presets/src/client/presentation.ts
-@@ -1,6 +1,18 @@
- /** Machine value of the preset that requires an explicit GUI risk gate. */
- export const FULL_ACCESS_PRESET = 'danger-full-access'
- 
-+const PRESET_LABEL_KEYS = {
-+  'read-only': 'preset.readOnly',
-+  'workspace-write': 'preset.workspaceWrite',
-+  [FULL_ACCESS_PRESET]: 'preset.fullAccess',
-+} as const
-+
-+type PermissionPresetLabelKey = typeof PRESET_LABEL_KEYS[keyof typeof PRESET_LABEL_KEYS]
-+
-+function presetLabelKey(value: string): PermissionPresetLabelKey | undefined {
-+  return PRESET_LABEL_KEYS[value as keyof typeof PRESET_LABEL_KEYS]
-+}
-+
- /**
-  * Convert conventional kebab-case preset names into user-facing title case.
-  * @param name - host-supplied preset label or key.
-@@ -15,8 +27,11 @@ export function displayPresetName(name: string): string {
-  * Render a permission preset under its product label.
-  * @param value - preset machine value.
-  * @param name - host-supplied preset name.
-- * @returns the Full access product label or the conventional display name.
-+ * @param t - optional active-locale translation function.
-+ * @returns the localized built-in label or the conventional display name.
-  */
--export function displayPermissionPreset(value: string, name: string): string {
-+export function displayPermissionPreset(value: string, name: string, t?: (key: PermissionPresetLabelKey) => string): string {
-+  const key = presetLabelKey(value)
-+  if (key !== undefined && t !== undefined) return t(key)
-   return value === FULL_ACCESS_PRESET ? 'Full access' : displayPresetName(name)
- }
 diff --git a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
-index e3968cf..17dc0c6 100644
+index f802b93b..9eb067c2 100644
 --- a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
 +++ b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
-@@ -135,6 +135,13 @@ describe('ui-permission browser plugin', () => {
-       cancelLabel: 'Cancel',
-       confirmLabel: 'Enable Full access',
+@@ -133,13 +133,13 @@ describe('ui-permission browser plugin', () => {
      })
-+    b.ctx.locale.setLocale('zh')
-+    const chinese = await c.ui.options(proj, new AbortController().signal)
-+    expect(chinese.map(option => option.label)).toEqual(['只读', '工作区写入', '完全访问'])
-+    expect(chinese.find(option => option.id === 'danger-full-access')?.confirmation).toMatchObject({
+     b.locale.setLocale('zh')
+     const localized = await b.popup().options(proj, new AbortController().signal)
+-    expect(localized.map(option => option.label)).toEqual(['仅可查看', '工作区内修改', '完全权限'])
++    expect(localized.map(option => option.label)).toEqual(['只读', '工作区写入', '完全访问'])
+     expect(localized.find(option => option.id === 'danger-full-access')?.confirmation).toEqual({
+-      title: '确认启用完全权限？',
 +      title: '确认启用完全访问？',
+       description: accessZh['confirm.description'],
+       acknowledgeLabel: '我已了解风险，并愿意继续',
+       cancelLabel: '取消',
+-      confirmLabel: '启用完全权限',
 +      confirmLabel: '启用完全访问',
-+    })
-     b.values.set(sid('s1'), { ...SELECT, options: [{ value: 'plain', name: 'Ask Every Time' }] })
-     const passthrough = await c.ui.options(proj, new AbortController().signal)
-     expect(passthrough[0]?.label).toBe('Ask Every Time')
+     })
+     b.values.set(sid('s1'), { ...SELECT, options: [
+       { value: 'workspace-write', name: 'Project Files' },
 diff --git a/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx b/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
-index 9df3920..16cd53a 100644
+index b1af3314..c8bab728 100644
 --- a/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
 +++ b/packages/client/ui-permission-presets/tests/permission-presets-row.client.spec.tsx
-@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
- import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
- import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
- import { PermissionRow, type PermissionRowProps } from '../src/client/PermissionRow.tsx'
--import { en } from '../src/client/locales.ts'
-+import { en, zh } from '../src/client/locales.ts'
- import { PermissionPresetSettingsController } from '../src/client/settings-store.ts'
- 
- afterEach(cleanup)
-@@ -36,14 +36,13 @@ function ok<T>(value: T) {
-   return { rpcId: 'test', result: { ok: true as const, value } }
+@@ -53,8 +53,6 @@ function ok<T>(value: T) {
+   return { ok: true as const, value }
  }
  
--const dictionary: Record<string, string> = en
+-const dictionary: Record<string, string> = zh
 -const t: PermissionRowProps['t'] = key => dictionary[key] ?? key
- const runtime = {
-   useSessions: (() => { throw new Error('unused') }) as never,
+ type AttentionSnapshot = Parameters<Parameters<PermissionRowProps['useSessionPendingInteraction']>[0]>[0]
+ const noAttention: AttentionSnapshot = new Map()
+ const useSessionPendingInteraction: PermissionRowProps['useSessionPendingInteraction'] = selector => selector(noAttention)
+@@ -65,7 +63,8 @@ const runtime = {
    useWorkspaces: (() => { throw new Error('unused') }) as never,
  }
  
 -function mount(controller: PermissionPresetSettingsController) {
-+function mount(controller: PermissionPresetSettingsController, dictionary: Record<string, string> = en) {
++function mount(controller: PermissionPresetSettingsController, dictionary: Record<string, string> = zh) {
 +  const t: PermissionRowProps['t'] = key => dictionary[key] ?? key
    return render(
      <PermissionRow
        {...runtime}
-@@ -108,6 +107,20 @@ describe('PermissionRow', () => {
+@@ -87,7 +86,7 @@ describe('PermissionRow', () => {
+       },
+     })
+     mount(controller)
+-    const button = await screen.findByRole('button', { name: '仅可查看' })
++    const button = await screen.findByRole('button', { name: '只读' })
+     expect(button.getAttribute('aria-expanded')).toBe('false')
+     fireEvent.click(button)
+     expect(button.getAttribute('aria-expanded')).toBe('true')
+@@ -97,11 +96,11 @@ describe('PermissionRow', () => {
+     fireEvent.click(button)
+     expect(button.getAttribute('aria-expanded')).toBe('false')
+     fireEvent.click(button)
+-    fireEvent.click(screen.getByRole('menuitem', { name: '仅可查看' }))
++    fireEvent.click(screen.getByRole('menuitem', { name: '只读' }))
+     expect(mutate).not.toHaveBeenCalled()
+     fireEvent.click(button)
+-    fireEvent.click(screen.getByRole('menuitem', { name: '工作区内修改' }))
+-    await screen.findByRole('button', { name: '工作区内修改' })
++    fireEvent.click(screen.getByRole('menuitem', { name: '工作区写入' }))
++    await screen.findByRole('button', { name: '工作区写入' })
+     expect(mutate).toHaveBeenCalledOnce()
+   })
+ 
+@@ -114,15 +113,15 @@ describe('PermissionRow', () => {
+       },
+     })
+     mount(controller)
+-    fireEvent.click(await screen.findByRole('button', { name: '仅可查看' }))
+-    fireEvent.click(screen.getByRole('menuitem', { name: '完全权限' }))
++    fireEvent.click(await screen.findByRole('button', { name: '只读' }))
++    fireEvent.click(screen.getByRole('menuitem', { name: '完全访问' }))
+     expect(mutate).not.toHaveBeenCalled()
+     fireEvent.click(screen.getByRole('button', { name: '取消' }))
+-    expect(screen.queryByRole('dialog', { name: '确认启用完全权限？' })).toBeNull()
+-    fireEvent.click(screen.getByRole('button', { name: '仅可查看' }))
+-    fireEvent.click(screen.getByRole('menuitem', { name: '完全权限' }))
+-    const dialog = screen.getByRole('dialog', { name: '确认启用完全权限？' })
+-    const enable = screen.getByRole('button', { name: '启用完全权限' })
++    expect(screen.queryByRole('dialog', { name: '确认启用完全访问？' })).toBeNull()
++    fireEvent.click(screen.getByRole('button', { name: '只读' }))
++    fireEvent.click(screen.getByRole('menuitem', { name: '完全访问' }))
++    const dialog = screen.getByRole('dialog', { name: '确认启用完全访问？' })
++    const enable = screen.getByRole('button', { name: '启用完全访问' })
+     expect((enable as HTMLButtonElement).disabled).toBe(true)
+     fireEvent.click(screen.getByRole('checkbox'))
+     fireEvent.click(enable)
+@@ -130,6 +129,20 @@ describe('PermissionRow', () => {
      expect(dialog.isConnected).toBe(false)
    })
  
 +  it('renders the built-in permissions with Chinese labels in a Chinese locale', async () => {
-+    const controller = new PermissionPresetSettingsController({
++    const controller = derivedController({
 +      settings: {
 +        describe: () => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: [view('workspace-write')] })),
 +        mutate: vi.fn(),
-+      } as never,
++      },
 +    })
 +    mount(controller, zh)
 +    const button = await screen.findByRole('button', { name: '工作区写入' })
@@ -229,5 +425,26 @@ index 9df3920..16cd53a 100644
 +  })
 +
    it('hides an unavailable namespace and disables a read-only provider', async () => {
-     const absent = new PermissionPresetSettingsController({
+     const absent = derivedController({
        settings: {
+@@ -148,7 +161,7 @@ describe('PermissionRow', () => {
+       },
+     })
+     mount(readonly)
+-    expect((await screen.findByRole('button', { name: '仅可查看' })).hasAttribute('disabled')).toBe(true)
++    expect((await screen.findByRole('button', { name: '只读' })).hasAttribute('disabled')).toBe(true)
+   })
+ 
+   it('shows loading and a contained write error', async () => {
+@@ -170,9 +183,9 @@ describe('PermissionRow', () => {
+     mount(controller)
+     expect((await screen.findByRole('button', { name: '加载中' })).hasAttribute('disabled')).toBe(true)
+     describe.resolve(ok({ writable: true, hasDocument: false, namespaces: [view('read-only')] }))
+-    const button = await screen.findByRole('button', { name: '仅可查看' })
++    const button = await screen.findByRole('button', { name: '只读' })
+     fireEvent.click(button)
+-    fireEvent.click(screen.getByRole('menuitem', { name: '工作区内修改' }))
++    fireEvent.click(screen.getByRole('menuitem', { name: '工作区写入' }))
+     expect((await screen.findByRole('alert')).textContent).toBe('changed elsewhere')
+   })
+ })

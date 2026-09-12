@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "DeepSeek Harness 的 macOS 桌面版：承载网页界面、管理后端与社区插件。",
   "main": "main.js",
   "homepage": "https://github.com/deepseek-ai/deepseek-harness",
@@ -49,12 +49,14 @@
       {
         "provider": "github",
         "owner": "liuchengdong1993",
-        "repo": "deepseek-harness-desktop"
+        "repo": "deepseek-harness-desktop",
+        "releaseType": "release"
       }
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",

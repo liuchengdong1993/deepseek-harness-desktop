@@ -8,6 +8,11 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual re-run escape hatch: a tag push is the normal trigger, but when a
+  # ref cannot be pushed from the workstation (network restrictions) the same
+  # release can be rebuilt from the tag with:
+  #   gh workflow run release.yml --ref v0.1.7
+  workflow_dispatch:
 
 # Needed so the default GITHUB_TOKEN can create the Release and upload the .dmg.
 permissions:
@@ -21,7 +26,7 @@ jobs:
   build-macos-dmg:
     name: Build macOS arm64 dmg
     runs-on: macos-14            # Apple Silicon (arm64) runner
-    timeout-minutes: 120         # safety net: harness build + packaging are heavy
+    timeout-minutes: 180         # safety net: harness build + packaging are heavy
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -44,6 +49,11 @@ jobs:
         # its postinstall into node_modules/electron/dist; package.json's
         # build.electronDist points there, so electron-builder reuses it instead
         # of downloading Electron a second time.
+
+      - name: Verify desktop shell (unit tests + syntax)
+        run: npm run verify
+        # Cheap gate: the .app ships this very shell, so a broken lib/ file must
+        # fail the release long before the heavy harness bundle step starts.
 
       # ---------------------------------------------------------------------
       # Code signing + notarization (only when the certificate secret exists).
@@ -104,11 +114,15 @@ jobs:
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
 
       - name: Bundle DeepSeek Harness into harness.tar
-        timeout-minutes: 30      # pnpm install + build of the monorepo is the slow step
+        timeout-minutes: 60      # pnpm install + build of the monorepo is the slow step
         env:
           # The reviewed desktop patches are tied to this Harness revision.
           # Upgrade it deliberately together with refreshed patches and tests.
-          HARNESS_REV: 47f943859bef60e4160492346772ded9b24f765a
+          HARNESS_REV: fb2c4b9e698e30edb738bca4cf0618587db7d203
+          # Upstream release this revision corresponds to (dsh-v0.1.5-rc.2).
+          # Asserted right after checkout so a revision/version mismatch fails
+          # the release instead of shipping silently.
+          HARNESS_VERSION: 0.1.5-rc.2
         run: |
           # WHY regenerate: harness.tar (~1.6 GB, includes node_modules) is in
           # .gitignore, so CI must rebuild it from source on every release. At
@@ -117,6 +131,8 @@ jobs:
           git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/deepseek-harness.git harness
           cd harness
           git checkout --detach "$HARNESS_REV"
+          test "$(node -p "require('./package.json').version")" = "$HARNESS_VERSION" \
+            || { echo "HARNESS_REV is not Harness $HARNESS_VERSION"; exit 1; }
           # The desktop product removes the beta declaration while preserving
           # the useful DeepSeek credential onboarding. Fail if upstream drift
           # makes the reviewed patch no longer apply cleanly.
@@ -131,7 +147,14 @@ jobs:
           # permission settings row and the in-session picker.
           git apply --check ../patches/harness-zh-permission-presets.patch
           git apply ../patches/harness-zh-permission-presets.patch
-          pnpm install
+          # WHY --no-frozen-lockfile: the desktop patches add dependencies to a
+          # few upstream packages (e.g. plugin-inventory gains js-yaml). The
+          # reviewed patches deliberately stay source-only — carrying a
+          # pnpm-lock.yaml delta made every harness upgrade a lockfile
+          # conflict. CI=true would otherwise default to frozen-lockfile and
+          # fail with ERR_PNPM_OUTDATED_LOCKFILE, so the lockfile is allowed to
+          # catch up here.
+          pnpm install --no-frozen-lockfile
           pnpm run build
           test -f apps/cli/lib/bin.js   # fail fast if the CLI wasn't built
           cd ..
@@ -174,20 +197,30 @@ jobs:
           test -f runtime/pnpm/dist/pnpm.mjs
           test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = "$PNPM_VERSION"
 
-      - name: Package & publish DMG (signed & notarized)
+      # WHY both dmg and zip: the dmg is what a human installs, but
+      # electron-updater on macOS resolves the .zip from latest-mac.yml — a
+      # dmg-only feed leaves auto-update unable to find an installable payload.
+      - name: Package & publish DMG + ZIP (signed & notarized)
         if: steps.signing.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Signing env (CSC_LINK / APPLE_*) was exported by the step above;
           # package.json has hardenedRuntime + entitlements + notarize: true.
-          # --publish always uploads the dmg + latest-mac.yml + blockmap to the
-          # GitHub Release so electron-updater can serve auto-updates.
-          npx electron-builder --mac dmg --publish always
+          # --publish always uploads dmg + zip + latest-mac.yml + blockmaps to
+          # the GitHub Release so electron-updater can serve auto-updates.
+          npx electron-builder --mac dmg zip --publish always
 
-      - name: Package & publish DMG (unsigned)
+      - name: Package & publish DMG + ZIP (unsigned)
         if: steps.signing.outputs.enabled != 'true'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # no Apple cert → unsigned build
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac dmg --publish always
+        run: npx electron-builder --mac dmg zip --publish always
+
+      - name: Verify packaged app signature
+        run: node scripts/verify-signature.cjs
+        # A .app without a valid _CodeSignature is SIGKILLed by macOS (app quits
+        # instantly with no log). The afterPack hook ad-hoc signs when there is
+        # no certificate; this step proves the shipped bundle really is signed.
+
