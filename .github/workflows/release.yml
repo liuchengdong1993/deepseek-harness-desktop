@@ -27,6 +27,14 @@ jobs:
     name: Build macOS arm64 dmg
     runs-on: macos-14            # Apple Silicon (arm64) runner
     timeout-minutes: 180         # safety net: harness build + packaging are heavy
+    env:
+      # The reviewed desktop patches are tied to this Harness revision.
+      # Upgrade it deliberately together with refreshed patches and tests.
+      HARNESS_REV: fb2c4b9e698e30edb738bca4cf0618587db7d203
+      # Upstream release this revision corresponds to (dsh-v0.1.5-rc.2).
+      # Asserted right after checkout so a revision/version mismatch fails
+      # the release instead of shipping silently.
+      HARNESS_VERSION: 0.1.5-rc.2
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -115,14 +123,6 @@ jobs:
 
       - name: Bundle DeepSeek Harness into harness.tar
         timeout-minutes: 60      # pnpm install + build of the monorepo is the slow step
-        env:
-          # The reviewed desktop patches are tied to this Harness revision.
-          # Upgrade it deliberately together with refreshed patches and tests.
-          HARNESS_REV: fb2c4b9e698e30edb738bca4cf0618587db7d203
-          # Upstream release this revision corresponds to (dsh-v0.1.5-rc.2).
-          # Asserted right after checkout so a revision/version mismatch fails
-          # the release instead of shipping silently.
-          HARNESS_VERSION: 0.1.5-rc.2
         run: |
           # WHY regenerate: harness.tar (~1.6 GB, includes node_modules) is in
           # .gitignore, so CI must rebuild it from source on every release. At
@@ -196,6 +196,26 @@ jobs:
           test -f runtime/pnpm/bin/pnpm.cjs
           test -f runtime/pnpm/dist/pnpm.mjs
           test "$(./runtime/node runtime/pnpm/bin/pnpm.cjs --version)" = "$PNPM_VERSION"
+
+      - name: Pre-create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # WHY pre-create: inside electron-builder the dmg and the zip publishers
+          # run concurrently and EACH tries to CREATE the release for the tag; the
+          # loser aborts the whole build with 422 "already_exists" (run 34680519312
+          # uploaded the assets and then failed). With the release already in place
+          # both publishers are pure uploaders.
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — reusing it"
+          else
+            gh release create "$TAG" \
+              --title "DeepSeek Harness $VERSION" \
+              --notes "自包含 macOS 桌面端（Apple Silicon arm64）：内置 DeepSeek Harness $HARNESS_VERSION（官方 GUI + Node 22 运行时 + pnpm），无需另装 Node、pnpm 或 Harness。" \
+              --latest
+          fi
 
       # WHY both dmg and zip: the dmg is what a human installs, but
       # electron-updater on macOS resolves the .zip from latest-mac.yml — a
