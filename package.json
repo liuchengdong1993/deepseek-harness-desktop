@@ -9,7 +9,7 @@
     "smoke": "DSH_DESKTOP_SMOKE=1 DSH_DESKTOP_WEB_PORT=3180 DSH_DESKTOP_DSH_HOME=/private/tmp/dsh-desktop-smoke-profile electron .",
     "icon": "node scripts/gen-icon.js && bash scripts/build-icns.sh",
     "test": "node --test test/*.test.js",
-    "verify": "npm test && node --check main.js && node --check lib/*.js",
+    "verify": "npm test && node --check main.js && node --check lib/*.js && node scripts/verify-builder-config.cjs",
     "dist": "electron-builder --mac dmg",
     "dist:adhoc": "electron-builder --mac dmg && node scripts/verify-signature.cjs"
   },
@@ -45,6 +45,7 @@
       "lib/promotion-helper.js"
     ],
     "electronDist": "node_modules/electron/dist",
+    "afterPack": "scripts/afterpack-adhoc-fallback.cjs",
     "publish": [
       {
         "provider": "github",
@@ -63,8 +64,7 @@
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
       "gatekeeperAssess": false,
-      "notarize": true,
-      "afterPack": "scripts/afterpack-adhoc-fallback.cjs"
+      "notarize": true
     },
     "dmg": {
       "title": "DeepSeek Harness ${version}",
